@@ -34,6 +34,8 @@ _CAM_BACK   = 10.0
 _CAM_HEIGHT =  7.0
 _CAM_SPEED  =  8.0     # smoothing speed (higher = snappier)
 _SHAKE_DUR  =  0.30    # seconds of shake after being hit
+# Fixed downward tilt so the camera at (0, HEIGHT, -BACK) looks at the car below
+_CAM_PITCH  = math.degrees(math.atan2(_CAM_HEIGHT, _CAM_BACK))  # ≈ 35°
 
 
 # ── Per-car visuals ───────────────────────────────────────────────────────────
@@ -118,8 +120,7 @@ class _CarVisual:
             # ── Normal update ─────────────────────────────────────────────
             self.body.x          = x
             self.body.z          = z
-            # Negate angle: sim uses CW-positive, Ursina uses CCW-positive
-            self.body.rotation_y = -angle
+            self.body.rotation_y = angle
 
             if hit:
                 # Flash white then fade back to base colour
@@ -168,8 +169,9 @@ class GameRenderer:
         self._is_host = is_host
 
         self._car_visuals: dict[int, _CarVisual] = {}
-        self._cam_pos  = Vec3(0, _CAM_HEIGHT, -_CAM_BACK)
-        self._shake_t  = 0.0   # seconds of shake remaining
+        self._cam_angle = 0.0   # degrees; smoothed toward car's heading
+        self._cam_pivot: Entity | None = None
+        self._shake_t   = 0.0   # seconds of shake remaining
 
         self._game_start_time: float | None = None
         self._prev_phase = ''
@@ -203,6 +205,7 @@ class GameRenderer:
         self._build_arena()
         self._add_lighting()
         self._build_hud()
+        self._setup_camera()
 
         _GameLoop(self)
         self._app.run()
@@ -269,6 +272,16 @@ class GameRenderer:
         sun.look_at(Vec3(1, -2, 1))
         AmbientLight(color=color.rgba(80, 80, 100, 255))
 
+    def _setup_camera(self):
+        # Pivot sits at the car's world position and rotates only around Y.
+        # Camera is a child with a fixed local offset + fixed downward tilt.
+        # This makes roll structurally impossible — no look_at ever needed.
+        self._cam_pivot = Entity()
+        camera.parent   = self._cam_pivot
+        camera.position = Vec3(0, _CAM_HEIGHT, -_CAM_BACK)
+        camera.rotation = Vec3(_CAM_PITCH, 0, 0)
+        camera.fov      = 110
+
     def _build_hud(self):
         self._phase_text = Text(
             text='',
@@ -317,7 +330,7 @@ class GameRenderer:
         if phase == 'game' and self._prev_phase != 'game':
             # Just entered game — record time and reset camera
             self._game_start_time = _time.time()
-            self._cam_pos = Vec3(0, _CAM_HEIGHT, -_CAM_BACK)
+            self._cam_angle = 0.0
 
         self._prev_phase = phase
 
@@ -460,30 +473,27 @@ class GameRenderer:
     # ── Camera (smooth follow + shake) ────────────────────────────────────────
 
     def _follow_camera(self, car: dict):
-        rad = math.radians(car['angle'])
-        tx  = car['x'] - math.sin(rad) * _CAM_BACK
-        tz  = car['z'] - math.cos(rad) * _CAM_BACK
+        # Smoothly rotate the pivot toward the car's heading (shortest path).
+        target = car['angle']
+        diff = ((target - self._cam_angle + 180) % 360) - 180
+        self._cam_angle = (self._cam_angle + diff * min(1.0, time.dt * _CAM_SPEED)) % 360
 
-        target = Vec3(tx, _CAM_HEIGHT, tz)
-        t = min(1.0, time.dt * _CAM_SPEED)
-        self._cam_pos = Vec3(
-            lerp(self._cam_pos.x, target.x, t),
-            lerp(self._cam_pos.y, target.y, t),
-            lerp(self._cam_pos.z, target.z, t),
-        )
-        camera.position = self._cam_pos
+        # Pivot moves to car's ground position and spins in Y only.
+        # Camera's local transform is fixed: behind + above + tilted down.
+        self._cam_pivot.position  = Vec3(car['x'], 0, car['z'])
+        self._cam_pivot.rotation_y = self._cam_angle
 
-        # Camera shake — decays linearly over _SHAKE_DUR seconds
+        # Shake: jitter the camera's local position, then snap back.
         if self._shake_t > 0:
             self._shake_t = max(0.0, self._shake_t - time.dt)
             mag = self._shake_intensity()
-            camera.position += Vec3(
+            camera.position = Vec3(
                 random.uniform(-1, 1) * mag,
-                random.uniform(-0.4, 0.4) * mag,
-                random.uniform(-1, 1) * mag,
+                _CAM_HEIGHT + random.uniform(-0.4, 0.4) * mag,
+                -_CAM_BACK  + random.uniform(-1, 1) * mag,
             )
-
-        camera.look_at(Vec3(car['x'], 0.3, car['z']))
+        else:
+            camera.position = Vec3(0, _CAM_HEIGHT, -_CAM_BACK)
 
     def _shake_intensity(self) -> float:
         return 0.35 * (self._shake_t / _SHAKE_DUR)
