@@ -78,29 +78,26 @@ class _CarVisual:
             scale=(1.05, 0.55, 0.13),
             position=(0, 0.0, 0.565),
         )
-        # Floating name + HP hearts above the car
+        # Floating name + HP bar above the car
         self.label = Text(
             text=self._label_text(CAR_HP),
             world_space=True,
-            scale=10,
+            scale=2,
             origin=(0, 0),
             color=color.white,
         )
-        try:
-            self.label.billboard = True   # always face camera
-        except Exception:
-            pass
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _label_text(self, hp: int) -> str:
-        hearts = '♥' * max(0, hp) + '♡' * max(0, CAR_HP - hp)
-        return f'{self._name}\n{hearts}'
+        bar = '*' * max(0, hp) + '-' * max(0, CAR_HP - hp)
+        return f'{self._name}\n{bar}'
 
     # ── State update ──────────────────────────────────────────────────────────
 
     def set_state(self, x: float, z: float, angle: float,
-                  hp: int, score: int, alive: bool) -> dict:
+                  hp: int, score: int, alive: bool,
+                  cam_heading: float = 0.0) -> dict:
         """
         Sync visuals to simulation state.
         Returns {'hit': bool, 'scored': bool} for triggering effects.
@@ -129,9 +126,10 @@ class _CarVisual:
                 self.cab.color  = color.white
                 self.cab.animate_color(self._roof, duration=0.25)
 
-            self.label.visible       = True
+            self.label.visible        = True
             self.label.world_position = Vec3(x, 1.9, z)
-            self.label.text          = self._label_text(hp)
+            self.label.rotation_y     = cam_heading + 180  # face toward camera
+            self.label.text           = self._label_text(hp)
 
         return {'hit': hit, 'scored': scored}
 
@@ -285,9 +283,9 @@ class GameRenderer:
     def _build_hud(self):
         self._phase_text = Text(
             text='',
-            position=(0, 0.42),
-            origin=(0, 0),
-            scale=2.0,
+            position=(0, 0.47),
+            origin=(0, 0.5),   # top-anchored so text flows downward, never clips
+            scale=1.8,
             color=color.white,
         )
         self._scoreboard = Text(
@@ -297,15 +295,7 @@ class GameRenderer:
             scale=1.5,
             color=color.white,
         )
-        # Translucent panel behind scoreboard
-        self._sb_bg = Entity(
-            parent=camera.ui,
-            model='quad',
-            color=color.rgba(0, 0, 0, 130),
-            scale=(0.38, 0.0),
-            position=(0.875, 0.45),
-            z=0.01,
-        )
+        self._sb_bg = None  # removed — white text is readable on dark background
         self._controls_hint = Text(
             text='',
             position=(0, -0.47),
@@ -362,7 +352,7 @@ class GameRenderer:
 
     def _draw_lobby(self):
         roster = self._player.roster
-        lines  = [f'─── LOBBY  ({len(roster)} players) ───\n']
+        lines  = [f'--- LOBBY  ({len(roster)} players) ---\n']
         for p in roster:
             lines.append(f'  {p["name"]}')
         lines.append('')
@@ -419,6 +409,7 @@ class GameRenderer:
             result = self._car_visuals[cid].set_state(
                 car['x'], car['z'], car['angle'],
                 car['hp'], car['score'], car['alive'],
+                self._cam_angle,
             )
             if result['hit'] and cid == my_id:
                 self._shake_t = _SHAKE_DUR      # trigger camera shake
@@ -442,20 +433,19 @@ class GameRenderer:
             for car in by_score:
                 name   = self._name_for(car['id'])
                 tag    = '>>' if car['id'] == my_id else '  '
-                hearts = '♥' * max(0, car['hp']) + '♡' * max(0, CAR_HP - car['hp'])
-                out    = '  ✗' if not car['alive'] else ''
+                hp_bar = '*' * max(0, car['hp']) + '-' * max(0, CAR_HP - car['hp'])
+                out    = '  x' if not car['alive'] else ''
                 sb_lines.append(
-                    f"{tag} {name}  {hearts}  ★{car['score']}{out}"
+                    f"{tag} {name}  {hp_bar}  #{car['score']}{out}"
                 )
             self._scoreboard.text   = '\n'.join(sb_lines)
-            self._sb_bg.scale_y     = len(sb_lines) * 0.057 + 0.04
             self._phase_text.text   = ''
             self._controls_hint.text = 'WASD / Arrows: drive     ESC: quit'
 
     def _draw_over(self):
         scores = self._player.final_scores
-        medals = ['★ 1st', '  2nd', '  3rd', '  4th', '  5th', '  6th']
-        lines  = ['══  GAME OVER  ══\n']
+        medals = ['  1st', '  2nd', '  3rd', '  4th', '  5th', '  6th']
+        lines  = ['== GAME OVER ==\n']
 
         winner = next((r for r in scores if r.get('winner')), None)
         if winner:
@@ -501,8 +491,7 @@ class GameRenderer:
     # ── Utility ───────────────────────────────────────────────────────────────
 
     def _clear_game_hud(self):
-        self._scoreboard.text  = ''
-        self._sb_bg.scale_y    = 0
+        self._scoreboard.text     = ''
         self._countdown_text.text = ''
 
     def _my_id(self) -> int:
