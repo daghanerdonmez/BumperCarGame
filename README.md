@@ -10,6 +10,17 @@ Multiplayer LAN bumper car game for CMPE 487. One player hosts, others join auto
 ## Setup
 
 ```bash
+python -m venv venv
+```
+
+Activate the virtual environment:
+
+- **macOS/Linux:** `source venv/bin/activate`
+- **Windows:** `venv\Scripts\activate`
+
+Then install dependencies:
+
+```bash
 pip install -r requirements.txt
 ```
 
