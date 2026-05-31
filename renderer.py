@@ -155,11 +155,6 @@ class GameRenderer:
         self._cam_pivot: Entity | None = None
         self._shake_t   = 0.0   # seconds of shake remaining
 
-        # HUD label that shows only the local player's name + HP, anchored to
-        # screen-space so it never drifts. Created once game cars are known.
-        self._my_label:    Text | None = None
-        self._my_label_hp: int         = -1  # last rendered HP (avoids thrashing)
-
         self._game_start_time: float | None = None
         self._prev_phase = ''
 
@@ -169,6 +164,14 @@ class GameRenderer:
         self._sb_bg:           Entity | None = None
         self._controls_hint:   Text | None = None
         self._countdown_text:  Text | None = None
+
+        # "you ↓" world-space tag above the local car (created lazily in _draw_game)
+        self._you_label:  Text | None = None
+
+        # Top-left HP / timer HUD (created in _build_hud)
+        self._status_label:    Text | None = None
+        self._status_label_val: Text | None = None  # coloured value part
+        self._last_timer_sec:  int = -1
 
         self._app = None
 
@@ -301,6 +304,25 @@ class GameRenderer:
             color=color.yellow,
         )
 
+        # Top-left status HUD — two side-by-side Text nodes so each can have
+        # its own colour without relying on rich-text tag support.
+        # _status_label  = key word  ("hp :" in red, or "time:" in yellow)
+        # _status_label_val = the number/value in white
+        self._status_label = Text(
+            text='',
+            position=(-0.87, 0.44),
+            origin=(-1, 0.5),
+            scale=2.2,
+            color=color.red,
+        )
+        self._status_label_val = Text(
+            text='',
+            position=(-0.60, 0.44),
+            origin=(-1, 0.5),
+            scale=2.2,
+            color=color.white,
+        )
+
     # ── Per-frame loop ────────────────────────────────────────────────────────
 
     def frame_update(self):
@@ -409,27 +431,52 @@ class GameRenderer:
                 except Exception:
                     pass
 
-        # ── Local-player label (screen-space, only visible to this player) ─
+        # ── "YOU ↓" world-space label above the local car ────────────────
         my_car = next((c for c in cars if c['id'] == my_id), None)
         if my_car:
-            if self._my_label is None:
-                self._my_label = Text(
-                    text='',
-                    position=(0, 0.30),   # centre-screen, below countdown zone
+            if self._you_label is None:
+                # Anchor entity lives in world space; Text is its child so it
+                # inherits the position and the camera-facing billboard flag.
+                anchor = Entity()
+                self._you_label = Text(
+                    text='YOU\n',
+                    parent=anchor,
                     origin=(0, 0),
-                    scale=2.2,
-                    color=color.white,
+                    scale=25,
+                    color=color.red,
+                    billboard=True,
                 )
-            if my_car['hp'] != self._my_label_hp:
-                self._my_label_hp = my_car['hp']
-                name = self._name_for(my_id)
-                sim  = self._player.sim  # may be None briefly at game start
-                max_hp = sim.car_hp if sim is not None else my_car['hp']
-                bar  = '*' * max(0, my_car['hp']) + '-' * max(0, max_hp - my_car['hp'])
-                self._my_label.text = f'{name}  {bar}'
-            self._my_label.visible = my_car['alive']
-        elif self._my_label is not None:
-            self._my_label.visible = False
+                self._you_label._anchor = anchor   # keep reference to move it
+            self._you_label._anchor.position = Vec3(my_car['x'], 2.2, my_car['z'])
+            self._you_label._anchor.visible  = my_car['alive']
+        elif self._you_label is not None:
+            self._you_label._anchor.visible = False
+
+        # ── Top-left HP / timer HUD ───────────────────────────────────────
+        if not in_countdown:
+            sim = self._player.sim
+            score_mode = sim.score_mode if sim is not None else 'last_standing'
+            if score_mode == 'last_standing':
+                hp_val = my_car['hp'] if my_car else 0
+                self._status_label.text     = 'HP:'
+                self._status_label.color    = color.red
+                self._status_label_val.text = str(hp_val)
+                self._status_label.visible     = True
+                self._status_label_val.visible  = True
+            else:  # most_bumps — count down remaining seconds
+                game_elapsed = _time.time() - (self._game_start_time or _time.time())
+                game_dur     = sim.game_duration if sim is not None else 0
+                secs_left    = max(0, int(game_dur - max(0.0, game_elapsed - LOBBY_COUNTDOWN)))
+                if secs_left != self._last_timer_sec:
+                    self._last_timer_sec         = secs_left
+                    self._status_label_val.text  = str(secs_left) + 's'
+                self._status_label.text     = 'Time:'
+                self._status_label.color    = color.yellow
+                self._status_label.visible     = True
+                self._status_label_val.visible  = True
+        else:
+            self._status_label.visible     = False
+            self._status_label_val.visible  = False
 
         # ── Camera ────────────────────────────────────────────────────────
         if my_car:
@@ -504,8 +551,10 @@ class GameRenderer:
     def _clear_game_hud(self):
         self._scoreboard.text     = ''
         self._countdown_text.text = ''
-        if self._my_label is not None:
-            self._my_label.visible = False
+        if self._you_label is not None:
+            self._you_label._anchor.visible = False
+        self._status_label.visible     = False
+        self._status_label_val.visible  = False
 
     def _my_id(self) -> int:
         if self._is_host:
