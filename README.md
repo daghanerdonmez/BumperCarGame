@@ -50,3 +50,8 @@ The host presses **Enter** in the lobby to start the game.
 ## Rules
 
 Ram into other cars to score bumps and reduce their HP. Last car standing wins.
+
+## TODO
+
+Fix the timer
+Connection lost on VM?
