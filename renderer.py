@@ -44,10 +44,10 @@ class _CarVisual:
     """All Ursina entities for one car in the scene."""
 
     def __init__(self, player_id: int, name: str):
-        self._name      = name
-        self._prev_hp   = CAR_HP
+        self._name       = name
+        self._prev_hp    = CAR_HP
         self._prev_score = 0
-        self._was_alive = True
+        self._was_alive  = True
 
         idx  = (player_id - 1) % len(PLAYER_COLORS)
         r, g, b = PLAYER_COLORS[idx]
@@ -78,14 +78,6 @@ class _CarVisual:
             scale=(1.05, 0.55, 0.13),
             position=(0, 0.0, 0.565),
         )
-        # Floating name + HP bar above the car
-        self.label = Text(
-            text=self._label_text(CAR_HP),
-            world_space=True,
-            scale=2,
-            origin=(0, 0),
-            color=color.white,
-        )
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -96,8 +88,7 @@ class _CarVisual:
     # ── State update ──────────────────────────────────────────────────────────
 
     def set_state(self, x: float, z: float, angle: float,
-                  hp: int, score: int, alive: bool,
-                  cam_heading: float = 0.0) -> dict:
+                  hp: int, score: int, alive: bool) -> dict:
         """
         Sync visuals to simulation state.
         Returns {'hit': bool, 'scored': bool} for triggering effects.
@@ -110,7 +101,6 @@ class _CarVisual:
         if self._was_alive and not alive:
             # ── Elimination: sink below the floor ─────────────────────────
             self.body.animate_y(-1.5, duration=0.55)
-            self.label.visible = False
             self._was_alive = False
 
         elif alive:
@@ -126,16 +116,10 @@ class _CarVisual:
                 self.cab.color  = color.white
                 self.cab.animate_color(self._roof, duration=0.25)
 
-            self.label.visible        = True
-            self.label.world_position = Vec3(x, 1.9, z)
-            self.label.rotation_y     = cam_heading + 180  # face toward camera
-            self.label.text           = self._label_text(hp)
-
         return {'hit': hit, 'scored': scored}
 
     def remove(self):
-        destroy(self.body)   # destroys parented children too
-        destroy(self.label)
+        destroy(self.body)   # destroys parented children too (cab, bumper)
 
 
 # ── Ursina update / input hook ────────────────────────────────────────────────
@@ -170,6 +154,11 @@ class GameRenderer:
         self._cam_angle = 0.0   # degrees; smoothed toward car's heading
         self._cam_pivot: Entity | None = None
         self._shake_t   = 0.0   # seconds of shake remaining
+
+        # HUD label that shows only the local player's name + HP, anchored to
+        # screen-space so it never drifts. Created once game cars are known.
+        self._my_label:    Text | None = None
+        self._my_label_hp: int         = -1  # last rendered HP (avoids thrashing)
 
         self._game_start_time: float | None = None
         self._prev_phase = ''
@@ -409,7 +398,6 @@ class GameRenderer:
             result = self._car_visuals[cid].set_state(
                 car['x'], car['z'], car['angle'],
                 car['hp'], car['score'], car['alive'],
-                self._cam_angle,
             )
             if result['hit'] and cid == my_id:
                 self._shake_t = _SHAKE_DUR      # trigger camera shake
@@ -421,19 +409,42 @@ class GameRenderer:
                 except Exception:
                     pass
 
-        # ── Camera ────────────────────────────────────────────────────────
+        # ── Local-player label (screen-space, only visible to this player) ─
         my_car = next((c for c in cars if c['id'] == my_id), None)
+        if my_car:
+            if self._my_label is None:
+                self._my_label = Text(
+                    text='',
+                    position=(0, 0.30),   # centre-screen, below countdown zone
+                    origin=(0, 0),
+                    scale=2.2,
+                    color=color.white,
+                )
+            if my_car['hp'] != self._my_label_hp:
+                self._my_label_hp = my_car['hp']
+                name = self._name_for(my_id)
+                sim  = self._player.sim  # may be None briefly at game start
+                max_hp = sim.car_hp if sim is not None else my_car['hp']
+                bar  = '*' * max(0, my_car['hp']) + '-' * max(0, max_hp - my_car['hp'])
+                self._my_label.text = f'{name}  {bar}'
+            self._my_label.visible = my_car['alive']
+        elif self._my_label is not None:
+            self._my_label.visible = False
+
+        # ── Camera ────────────────────────────────────────────────────────
         if my_car:
             self._follow_camera(my_car)
 
         # ── Scoreboard ────────────────────────────────────────────────────
         if not in_countdown:
+            sim    = self._player.sim
+            max_hp = sim.car_hp if sim is not None else CAR_HP
             by_score = sorted(cars, key=lambda c: c['score'], reverse=True)
             sb_lines = []
             for car in by_score:
                 name   = self._name_for(car['id'])
                 tag    = '>>' if car['id'] == my_id else '  '
-                hp_bar = '*' * max(0, car['hp']) + '-' * max(0, CAR_HP - car['hp'])
+                hp_bar = '*' * max(0, car['hp']) + '-' * max(0, max_hp - car['hp'])
                 out    = '  x' if not car['alive'] else ''
                 sb_lines.append(
                     f"{tag} {name}  {hp_bar}  #{car['score']}{out}"
@@ -493,6 +504,8 @@ class GameRenderer:
     def _clear_game_hud(self):
         self._scoreboard.text     = ''
         self._countdown_text.text = ''
+        if self._my_label is not None:
+            self._my_label.visible = False
 
     def _my_id(self) -> int:
         if self._is_host:
