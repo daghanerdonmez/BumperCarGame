@@ -25,7 +25,8 @@ def _ask(prompt: str, default: str = "") -> str:
     try:
         val = input(prompt).strip()
     except (EOFError, KeyboardInterrupt):
-        val = ""
+        print("\nExiting...")
+        sys.exit(0)
     return val or default
 
 
@@ -36,7 +37,7 @@ def _pick_mode() -> str:
 
     print()
     print("╔══════════════════════════════╗")
-    print("║    Bumper Car Arena  🚗💥    ║")
+    print("║       Bumper Car Arena       ║")
     print("╠══════════════════════════════╣")
     print("║  1. Host a game              ║")
     print("║  2. Join a game              ║")
