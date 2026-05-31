@@ -24,17 +24,17 @@ WALL_THICKNESS = 0.5
 # Car physics
 CAR_RADIUS = 0.6              # collision radius
 CAR_MASS = 1.0
-CAR_MAX_SPEED = 8.0
-CAR_ACCELERATION = 12.0
+CAR_MAX_SPEED = 20.0
+CAR_ACCELERATION = 15.0
 CAR_FRICTION = 5.0            # velocity damping per second
 CAR_TURN_SPEED = 180.0        # degrees per second
 BUMP_RESTITUTION = 0.7        # bounciness on car-car collision (0-1)
 WALL_RESTITUTION = 0.5        # bounciness on wall hit
 
-# Scoring
-SCORE_MODE = "last_standing"  # "last_standing" | "most_bumps"
+# Default values for scoring 
+SCORE_MODE = "last_standing"  # "last_standing" | "most_bumps".
 GAME_DURATION = 120           # seconds (used in most_bumps mode)
-CAR_HP = 3                    # hits before a car is eliminated
+CAR_HP = 3                    # hits before a car is eliminated (used in last standing mode)
 
 # Visual (Ursina hints used by renderer)
 PLAYER_COLORS = [

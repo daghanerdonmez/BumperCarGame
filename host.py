@@ -34,9 +34,15 @@ from simulation import Simulation
 
 
 class Host:
-    def __init__(self, player_name: str):
+    def __init__(self, player_name: str, game_config: dict | None = None):
         self.player_name  = player_name
         self.my_player_id = 1
+
+        # Game settings chosen by the host before starting
+        cfg = game_config or {}
+        self.score_mode    = cfg.get("score_mode",    "last_standing")
+        self.game_duration = float(cfg.get("game_duration", 120))
+        self.car_hp        = int(cfg.get("car_hp", 3))
 
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -115,7 +121,12 @@ class Host:
         with self._roster_lock:
             roster_snap = list(self.roster)
 
-        self.sim = Simulation(roster_snap)
+        self.sim = Simulation(
+            roster_snap,
+            score_mode=self.score_mode,
+            game_duration=self.game_duration,
+            car_hp=self.car_hp,
+        )
         positions = self.sim.get_initial_positions()
 
         start_pkt = mk_game_start(roster_snap, positions)

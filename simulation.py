@@ -10,7 +10,7 @@ from config import (
     CAR_RADIUS, CAR_MAX_SPEED, CAR_ACCELERATION,
     CAR_FRICTION, CAR_TURN_SPEED,
     BUMP_RESTITUTION, WALL_RESTITUTION,
-    CAR_HP, SCORE_MODE, GAME_DURATION,
+    CAR_HP, SCORE_MODE, GAME_DURATION,   # used as defaults only
 )
 
 _HALF_W = ARENA_WIDTH  / 2 - CAR_RADIUS   # x boundary for car centre
@@ -48,10 +48,23 @@ class CarState:
 
 
 class Simulation:
-    def __init__(self, players: list[dict]):
+    def __init__(
+        self,
+        players: list[dict],
+        score_mode:    str   = SCORE_MODE,
+        game_duration: float = GAME_DURATION,
+        car_hp:        int   = CAR_HP,
+    ):
         """
-        players: list of {"id": int, "name": str}
+        players:       list of {"id": int, "name": str}
+        score_mode:    "last_standing" | "most_bumps"
+        game_duration: seconds before most_bumps ends
+        car_hp:        hits before a car is eliminated (last_standing)
         """
+        self.score_mode    = score_mode
+        self.game_duration = game_duration
+        self.car_hp        = car_hp
+
         self.tick    = 0
         self.elapsed = 0.0
         self.running = True
@@ -60,11 +73,11 @@ class Simulation:
         self.cars:   dict[int, CarState]        = {}
         self._inputs: dict[int, tuple[float, float]] = {}  # id -> (forward, turn)
 
-        self._spawn(players)
+        self._spawn(players, car_hp)
 
     # ── Setup ─────────────────────────────────────────────────────────────────
 
-    def _spawn(self, players: list[dict]):
+    def _spawn(self, players: list[dict], car_hp: int):
         n = len(players)
         radius = min(ARENA_WIDTH, ARENA_DEPTH) * 0.28
         for i, p in enumerate(players):
@@ -72,7 +85,9 @@ class Simulation:
             x = radius * math.sin(theta)
             z = radius * math.cos(theta)
             facing = (math.degrees(theta) + 180.0) % 360.0  # face centre
-            self.cars[p["id"]] = CarState(p["id"], p["name"], x, z, facing)
+            car = CarState(p["id"], p["name"], x, z, facing)
+            car.hp = car_hp
+            self.cars[p["id"]] = car
             self._inputs[p["id"]] = (0.0, 0.0)
 
     # ── Input ─────────────────────────────────────────────────────────────────
@@ -222,7 +237,7 @@ class Simulation:
     # ── Win condition ─────────────────────────────────────────────────────────
 
     def _check_win(self):
-        if SCORE_MODE == "last_standing":
+        if self.score_mode == "last_standing":
             alive = [c for c in self.cars.values() if c.alive]
             # Only trigger last-standing when multiple players were present;
             # a solo player can drive freely without the game ending instantly.
@@ -230,7 +245,7 @@ class Simulation:
                 self.running  = False
                 self.winner_id = alive[0].id if alive else None
         else:  # "most_bumps"
-            if self.elapsed >= GAME_DURATION:
+            if self.elapsed >= self.game_duration:
                 self.running = False
                 best = max(self.cars.values(), key=lambda c: c.score, default=None)
                 self.winner_id = best.id if best else None
