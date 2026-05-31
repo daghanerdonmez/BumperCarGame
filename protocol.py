@@ -108,7 +108,10 @@ def mk_player_list(roster: list[dict]) -> dict:
     return {"type": T_PLAYER_LIST, "roster": roster}
 
 
-def mk_game_start(roster: list[dict], initial_positions: list[dict]) -> dict:
+def mk_game_start(roster: list[dict], initial_positions: list[dict],
+                  score_mode: str = 'last_standing',
+                  game_duration: float = 120.0,
+                  car_hp: int = 3) -> dict:
     """
     initial_positions: list of {"id": int, "x": float, "z": float, "angle": float}
     """
@@ -116,6 +119,9 @@ def mk_game_start(roster: list[dict], initial_positions: list[dict]) -> dict:
         "type": T_GAME_START,
         "roster": roster,
         "initial_positions": initial_positions,
+        "score_mode": score_mode,
+        "game_duration": game_duration,
+        "car_hp": car_hp,
     }
 
 
