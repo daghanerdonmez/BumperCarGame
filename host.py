@@ -66,6 +66,10 @@ class Host:
         self._client_ips      = {}
         self._client_ips_lock = threading.Lock()
 
+        # Latest INPUT sent_at timestamp per client, echoed back in GAME_STATE
+        self._client_sent_at      = {}   # {player_id: float}
+        self._client_sent_at_lock = threading.Lock()
+
         # Simulation (created at start_game)
         self.sim: Simulation | None = None
 
@@ -335,11 +339,16 @@ class Host:
                     with self._phase_lock:
                         phase = self.game_phase
                     if phase == "game" and self.sim is not None:
+                        pid = pkt.get("player_id", -1)
                         self.sim.apply_input(
-                            pkt.get("player_id", -1),
+                            pid,
                             pkt.get("forward", 0.0),
                             pkt.get("turn",    0.0),
                         )
+                        sent_at = pkt.get("sent_at")
+                        if sent_at is not None:
+                            with self._client_sent_at_lock:
+                                self._client_sent_at[pid] = sent_at
         finally:
             self._udp_sock = None
             s.close()
@@ -397,12 +406,20 @@ class Host:
             raw_state  = json.dumps(state_pkt).encode("utf-8")
 
             with self._client_ips_lock:
-                ips = list(self._client_ips.values())
+                client_ips = list(self._client_ips.items())   # [(player_id, ip), ...]
 
-            for ip in ips:
+            for pid, ip in client_ips:
+                with self._client_sent_at_lock:
+                    sent_at = self._client_sent_at.get(pid)
+                if sent_at is not None:
+                    # Personalise the packet with this client's own timestamp
+                    personalised = dict(state_pkt, sent_at=sent_at)
+                    raw = json.dumps(personalised).encode("utf-8")
+                else:
+                    raw = raw_state
                 try:
                     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-                        s.sendto(raw_state, (ip, UDP_PORT))
+                        s.sendto(raw, (ip, UDP_PORT))
                 except OSError:
                     pass
 

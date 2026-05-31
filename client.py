@@ -75,6 +75,9 @@ class Client:
         # Final scores when game ends
         self.final_scores: list[dict] = []
 
+        # Ping (round-trip ms), updated each time a GAME_STATE echoes our timestamp
+        self.ping_ms: int | None = None
+
         self._stop_event = threading.Event()
         self._threads: list[threading.Thread] = []
 
@@ -373,6 +376,9 @@ class Client:
             if phase == "game":
                 with self._state_lock:
                     self._latest_state = pkt["cars"]
+                sent_at = pkt.get("sent_at")
+                if sent_at is not None:
+                    self.ping_ms = round((time.perf_counter() - sent_at) * 1000)
 
     # ── Input sender ──────────────────────────────────────────────────────────
 
@@ -398,6 +404,7 @@ class Client:
 
             self._local_tick += 1
             pkt = mk_input(self.player_id, self._local_tick, forward, turn)
+            pkt["sent_at"] = time.perf_counter()   # echoed back by host in GAME_STATE
             raw = json.dumps(pkt).encode("utf-8")
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:

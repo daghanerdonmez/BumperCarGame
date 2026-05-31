@@ -79,12 +79,6 @@ class _CarVisual:
             position=(0, 0.0, 0.565),
         )
 
-    # ── Helpers ───────────────────────────────────────────────────────────────
-
-    def _label_text(self, hp: int) -> str:
-        bar = '*' * max(0, hp) + '-' * max(0, CAR_HP - hp)
-        return f'{self._name}\n{bar}'
-
     # ── State update ──────────────────────────────────────────────────────────
 
     def set_state(self, x: float, z: float, angle: float,
@@ -160,10 +154,12 @@ class GameRenderer:
 
         # HUD text objects (created in run())
         self._phase_text:      Text | None = None
-        self._scoreboard:      Text | None = None
         self._sb_bg:           Entity | None = None
         self._controls_hint:   Text | None = None
         self._countdown_text:  Text | None = None
+
+        # Scoreboard: list of (name_text, value_text) — one pair per player row
+        self._sb_rows: list[tuple] = []
 
         # "you ↓" world-space tag above the local car (created lazily in _draw_game)
         self._you_label:  Text | None = None
@@ -280,13 +276,6 @@ class GameRenderer:
             scale=1.8,
             color=color.white,
         )
-        self._scoreboard = Text(
-            text='',
-            position=(0.88, 0.45),
-            origin=(1, 0.5),
-            scale=1.5,
-            color=color.white,
-        )
         self._sb_bg = None  # removed — white text is readable on dark background
         self._controls_hint = Text(
             text='',
@@ -321,6 +310,15 @@ class GameRenderer:
             origin=(-1, 0.5),
             scale=2.2,
             color=color.white,
+        )
+
+        # Bottom-right ping display
+        self._ping_label = Text(
+            text='',
+            position=(0.87, -0.43),
+            origin=(1, 0),
+            scale=1.5,
+            color=color.rgb(150, 150, 155),
         )
 
     # ── Per-frame loop ────────────────────────────────────────────────────────
@@ -424,14 +422,9 @@ class GameRenderer:
             if result['hit'] and cid == my_id:
                 self._shake_t = _SHAKE_DUR      # trigger camera shake
             if result['scored'] and cid == my_id:
-                # Gold-flash the scoreboard when we score
-                try:
-                    self._scoreboard.color = color.gold
-                    self._scoreboard.animate_color(color.white, duration=0.5)
-                except Exception:
-                    pass
+                pass  # (score flash removed with old scoreboard)
 
-        # ── "YOU ↓" world-space label above the local car ────────────────
+        # ── "YOU" world-space label above the local car ────────────────
         my_car = next((c for c in cars if c['id'] == my_id), None)
         if my_car:
             if self._you_label is None:
@@ -478,26 +471,68 @@ class GameRenderer:
             self._status_label.visible     = False
             self._status_label_val.visible  = False
 
+        # ── Ping display (clients only) ───────────────────────────────────
+        if not self._is_host:
+            ping = getattr(self._player, 'ping_ms', None)
+            self._ping_label.text = f'ping: {ping} ms' if ping is not None else ''
+
         # ── Camera ────────────────────────────────────────────────────────
         if my_car:
             self._follow_camera(my_car)
 
         # ── Scoreboard ────────────────────────────────────────────────────
         if not in_countdown:
-            sim    = self._player.sim
-            max_hp = sim.car_hp if sim is not None else CAR_HP
-            by_score = sorted(cars, key=lambda c: c['score'], reverse=True)
-            sb_lines = []
-            for car in by_score:
-                name   = self._name_for(car['id'])
-                tag    = '>>' if car['id'] == my_id else '  '
-                hp_bar = '*' * max(0, car['hp']) + '-' * max(0, max_hp - car['hp'])
-                out    = '  x' if not car['alive'] else ''
-                sb_lines.append(
-                    f"{tag} {name}  {hp_bar}  #{car['score']}{out}"
-                )
-            self._scoreboard.text   = '\n'.join(sb_lines)
-            self._phase_text.text   = ''
+            sim        = self._player.sim
+            score_mode = sim.score_mode if sim is not None else 'last_standing'
+
+            if score_mode == 'most_bumps':
+                rows = sorted(cars, key=lambda c: c['score'], reverse=True)
+            else:
+                rows = list(cars)
+
+            # Grow the row pool if needed
+            # Name starts at NAME_X (left-anchored); value starts at VAL_X (left-anchored)
+            # so value always appears to the right of the name column.
+            NAME_X     = 0.30   # left edge of name column
+            VAL_X      = 0.72   # left edge of value column (after name)
+            ROW_TOP    = 0.45
+            ROW_STEP   = 0.068
+            ROW_SCALE  = 1.5
+
+            while len(self._sb_rows) < len(rows):
+                i = len(self._sb_rows)
+                y = ROW_TOP - i * ROW_STEP
+                name_t = Text(text='', position=(NAME_X, y), origin=(-1, 0.5),
+                              scale=ROW_SCALE, color=color.white)
+                val_t  = Text(text='', position=(VAL_X, y), origin=(-1, 0.5),
+                              scale=ROW_SCALE, color=color.white)
+                self._sb_rows.append((name_t, val_t))
+
+            # Update each row; hide extras
+            for i, (name_t, val_t) in enumerate(self._sb_rows):
+                if i < len(rows):
+                    car  = rows[i]
+                    name = self._name_for(car['id'])
+                    tag  = '>>' if car['id'] == my_id else '  '
+                    name_t.text    = f'{tag} {name}:'
+                    name_t.visible = True
+
+                    if score_mode == 'most_bumps':
+                        val_t.text  = str(car['score'])
+                        val_t.color = color.white
+                    else:
+                        if car['alive']:
+                            val_t.text  = 'ALIVE'
+                            val_t.color = color.lime
+                        else:
+                            val_t.text  = 'ELIMINATED'
+                            val_t.color = color.red
+                    val_t.visible = True
+                else:
+                    name_t.visible = False
+                    val_t.visible  = False
+
+            self._phase_text.text    = ''
             self._controls_hint.text = 'WASD / Arrows: drive     ESC: quit'
 
     def _draw_over(self):
@@ -549,12 +584,15 @@ class GameRenderer:
     # ── Utility ───────────────────────────────────────────────────────────────
 
     def _clear_game_hud(self):
-        self._scoreboard.text     = ''
         self._countdown_text.text = ''
+        for name_t, val_t in self._sb_rows:
+            name_t.visible = False
+            val_t.visible  = False
         if self._you_label is not None:
             self._you_label._anchor.visible = False
         self._status_label.visible     = False
         self._status_label_val.visible  = False
+        self._ping_label.text = ''
 
     def _my_id(self) -> int:
         if self._is_host:
