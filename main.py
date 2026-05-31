@@ -63,21 +63,9 @@ def _host_config() -> dict:
         choice = "1"
 
     if choice == "1":
-        raw_hp = _ask("How much HP should each car have? (Default 3): ", "3").strip()
-        try:
-            car_hp = max(1, int(raw_hp))
-        except ValueError:
-            print("Invalid value. Using default HP of 3.")
-            car_hp = 3
-        return {"score_mode": "last_standing", "car_hp": car_hp, "game_duration": 120}
-    else:
-        raw_dur = _ask("What should be the game duration in seconds? (Default 120): ", "120").strip()
-        try:
-            game_duration = max(1, int(raw_dur))
-        except ValueError:
-            print("Invalid value. Using default duration of 120s.")
-            game_duration = 120
-        return {"score_mode": "most_bumps", "game_duration": game_duration, "car_hp": 3}
+        arg = _ask("How much HP should each car have? (Default 3): ", "3").strip()
+    elif choice == "2":
+        arg = _ask("What should be the game duration in seconds? (Default 120): ", "120").strip()
 
 
 def run_host(username: str) -> None:
