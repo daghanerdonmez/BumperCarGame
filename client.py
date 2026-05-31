@@ -52,7 +52,9 @@ class Client:
         self._host_found = threading.Event()
 
         # All hosts seen during discovery {ip: {"host_name", "player_count", "max_players"}}
-        self.known_hosts: dict[str, dict] = {}
+        # The renderer / main thread reads this; confirm_join() picks one.
+        self.discovered_hosts: list[dict] = []
+        self._discovered_lock = threading.Lock()
 
         # Assigned by host on JOIN_ACK
         self.player_id: int | None = None
@@ -110,6 +112,28 @@ class Client:
 
         for t in self._threads:
             t.join(timeout=2.0)
+
+    def confirm_join(self, host_ip: str | None = None):
+        """
+        Called by main.py (terminal) or renderer once the user picks a host.
+        If host_ip is None, uses the first discovered host.
+        """
+        with self._discovered_lock:
+            hosts = list(self.discovered_hosts)
+
+        if host_ip is None and hosts:
+            host_ip = hosts[0]["host_ip"]
+
+        if host_ip is None:
+            return  # nothing found yet
+
+        # Find the matching entry so we have host_name too
+        with self._discovered_lock:
+            entry = next((h for h in self.discovered_hosts if h["host_ip"] == host_ip), None)
+
+        self.host_ip   = host_ip
+        self.host_name = entry["host_name"] if entry else host_ip
+        self._host_found.set()
 
     def set_input(self, forward: float, turn: float):
         """Called by the renderer every frame with the local player's controls."""
@@ -324,20 +348,24 @@ class Client:
             if host_ip == self.my_ip:
                 return   # ignore our own machine if we happen to be both
 
-            # Always record every host we hear about
-            self.known_hosts[host_ip] = {
+            # Add/update this host in the discovery list (no auto-join)
+            entry = {
+                "host_ip":      host_ip,
                 "host_name":    pkt.get("host_name", "?"),
                 "player_count": pkt.get("player_count", 0),
                 "max_players":  pkt.get("max_players", 0),
             }
-
-            # Auto-join the first host seen while still discovering
-            if not self._host_found.is_set():
-                self.host_ip   = host_ip
-                self.host_name = pkt.get("host_name", host_ip)
-                print(f"[client] Found host '{self.host_name}' @ {self.host_ip} "
-                      f"({pkt.get('player_count')}/{pkt.get('max_players')} players)")
-                self._host_found.set()
+            with self._discovered_lock:
+                ips = [h["host_ip"] for h in self.discovered_hosts]
+                if host_ip not in ips:
+                    self.discovered_hosts.append(entry)
+                    print(f"[client] Found host '{entry['host_name']}' @ {host_ip} "
+                          f"({entry['player_count']}/{entry['max_players']} players)")
+                else:
+                    # Refresh player count in-place
+                    for h in self.discovered_hosts:
+                        if h["host_ip"] == host_ip:
+                            h.update(entry)
 
         elif t == T_GAME_STATE:
             with self._phase_lock:

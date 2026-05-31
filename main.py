@@ -63,9 +63,21 @@ def _host_config() -> dict:
         choice = "1"
 
     if choice == "1":
-        arg = _ask("How much HP should each car have? (Default 3): ", "3").strip()
-    elif choice == "2":
-        arg = _ask("What should be the game duration in seconds? (Default 120): ", "120").strip()
+        raw_hp = _ask("How much HP should each car have? (Default 3): ", "3").strip()
+        try:
+            car_hp = max(1, int(raw_hp))
+        except ValueError:
+            print("Invalid value. Using default HP of 3.")
+            car_hp = 3
+        return {"score_mode": "last_standing", "car_hp": car_hp, "game_duration": 120}
+    else:
+        raw_dur = _ask("What should be the game duration in seconds? (Default 120): ", "120").strip()
+        try:
+            game_duration = max(1, int(raw_dur))
+        except ValueError:
+            print("Invalid value. Using default duration of 120s.")
+            game_duration = 120
+        return {"score_mode": "most_bumps", "game_duration": game_duration, "car_hp": 3}
 
 
 def run_host(username: str) -> None:
@@ -95,17 +107,73 @@ def run_host(username: str) -> None:
 
 
 def run_client(username: str) -> None:
+    import time
     from client import Client
     from renderer import GameRenderer
-
+ 
     player = Client(username)
-    player.start()              # begins discovery immediately
-
+    player.start()              # begins discovery (no auto-join)
+ 
+    # ── Terminal host-picker (blocks until user picks or quits) ──────────────
+    print()
+    print("Scanning for games on the local network…  (Ctrl-C to quit)")
+    print()
+ 
+    chosen_ip = None
+    while chosen_ip is None:
+        try:
+            time.sleep(0.5)     # give UDP a moment between redraws
+            hosts = player.discovered_hosts
+ 
+            if not hosts:
+                print("  No games found yet — still scanning…", end="\r", flush=True)
+                continue
+ 
+            # Print the current list
+            print()
+            print("╔══════════════════════════════════════════╗")
+            print("║          Games found on network          ║")
+            print("╠══════════════════════════════════════════╣")
+            for i, h in enumerate(hosts, 1):
+                slots = f"{h['player_count']}/{h['max_players']}"
+                line  = f"  {i}. {h['host_name']} ({h['host_ip']})  [{slots}]"
+                print(f"║ {line:<40} ║")
+            print("╚══════════════════════════════════════════╝")
+            print()
+ 
+            raw = _ask(f"Enter number to join, R to refresh, or Q to quit [1]: ", "1")
+ 
+            if raw.upper() == "Q":
+                player.stop()
+                return
+            if raw.upper() == "R":
+                continue
+ 
+            try:
+                idx = int(raw) - 1
+                hosts = player.discovered_hosts   # re-read after potential refresh
+                if 0 <= idx < len(hosts):
+                    chosen_ip = hosts[idx]["host_ip"]
+                else:
+                    print(f"  Please enter a number between 1 and {len(hosts)}.")
+            except ValueError:
+                print("  Invalid input — enter a number.")
+ 
+        except KeyboardInterrupt:
+            player.stop()
+            return
+ 
+    player.confirm_join(chosen_ip)
+    print(f"  Joining game…")
+    print()
+    # ─────────────────────────────────────────────────────────────────────────
+ 
     renderer = GameRenderer(player, is_host=False)
     try:
         renderer.run()          # blocks until window closes
     finally:
         player.stop()
+
 
 
 def main() -> None:
