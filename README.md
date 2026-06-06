@@ -51,7 +51,7 @@ The host presses **Enter** in the lobby to start the game.
 
 Ram into other cars to score bumps and reduce their HP. Last car standing wins.
 
-## TODO
+## Known Bugs
 
-Fix the timer
-Connection lost on VM?
+Timer is not very accurate
+Sometimes when you bump into a car, the bumped car can rebound and bump you back
