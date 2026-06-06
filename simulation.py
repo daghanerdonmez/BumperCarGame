@@ -225,14 +225,16 @@ class Simulation:
         if significant:
             if a_toward_b >= b_toward_a:
                 a.score += 1
-                b.hp -= 1
-                if b.hp <= 0:
-                    b.alive = False
+                if self.score_mode == "last_standing":
+                    b.hp -= 1
+                    if b.hp <= 0:
+                        b.alive = False
             else:
                 b.score += 1
-                a.hp -= 1
-                if a.hp <= 0:
-                    a.alive = False
+                if self.score_mode == "last_standing":
+                    a.hp -= 1
+                    if a.hp <= 0:
+                        a.alive = False
 
     # ── Win condition ─────────────────────────────────────────────────────────
 

@@ -508,7 +508,10 @@ class Host:
             self.sim.step(dt)
 
             state_pkt = mk_game_state(self.sim.tick, self.sim.get_car_states())
-            raw_out   = json.dumps(state_pkt).encode("utf-8")
+            # Use time.time() (absolute wall clock) so the client — a separate
+            # process with a different perf_counter origin — can subtract it correctly.
+            state_pkt["sent_at"] = time.time()
+            raw_out = json.dumps(state_pkt).encode("utf-8")
 
             with self._client_ips_lock:
                 client_ips = list(self._client_ips.values())

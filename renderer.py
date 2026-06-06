@@ -312,13 +312,13 @@ class GameRenderer:
             color=color.white,
         )
 
-        # Bottom-right ping display
+        # Bottom-right ping display (clients only)
         self._ping_label = Text(
             text='',
             position=(0.87, -0.43),
             origin=(1, 0),
             scale=1.5,
-            color=color.rgb(150, 150, 155),
+            color=color.white,
         )
 
     # ── Per-frame loop ────────────────────────────────────────────────────────
@@ -475,7 +475,7 @@ class GameRenderer:
         # ── Ping display (clients only) ───────────────────────────────────
         if not self._is_host:
             ping = getattr(self._player, 'ping_ms', None)
-            self._ping_label.text = f'ping: {ping} ms' if ping is not None else ''
+            self._ping_label.text = f'Ping: {ping} ms' if ping is not None else 'Ping: --'
 
         # ── Camera ────────────────────────────────────────────────────────
         if my_car:

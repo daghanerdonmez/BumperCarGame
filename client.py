@@ -450,7 +450,7 @@ class Client:
                     self._latest_state = pkt["cars"]
                 sent_at = pkt.get("sent_at")
                 if sent_at is not None:
-                    self.ping_ms = round((time.perf_counter() - sent_at) * 1000)
+                    self.ping_ms = round((time.time() - sent_at) * 1000)
 
     # ── Input sender ──────────────────────────────────────────────────────────
 
