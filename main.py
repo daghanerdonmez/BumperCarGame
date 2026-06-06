@@ -69,7 +69,8 @@ def _host_config() -> dict:
         except ValueError:
             print("Invalid value. Using default HP of 3.")
             car_hp = 3
-        return {"score_mode": "last_standing", "car_hp": car_hp, "game_duration": 120}
+        score_mode = "last_standing"
+        game_duration = 120
     else:
         raw_dur = _ask("What should be the game duration in seconds? (Default 120): ", "120").strip()
         try:
@@ -77,7 +78,10 @@ def _host_config() -> dict:
         except ValueError:
             print("Invalid value. Using default duration of 120s.")
             game_duration = 120
-        return {"score_mode": "most_bumps", "game_duration": game_duration, "car_hp": 3}
+        score_mode = "most_bumps"
+        car_hp = 3
+    password = _ask("What should be the password? Please don't use special characters. (Default is 123): ", "123").strip()
+    return {"score_mode": score_mode, "game_duration": game_duration, "car_hp": car_hp, "password": password}
 
 
 def run_host(username: str) -> None:
@@ -94,6 +98,7 @@ def run_host(username: str) -> None:
         print(f"  Car HP   : {game_config['car_hp']}")
     else:
         print(f"  Duration : {game_config['game_duration']}s")
+    print(f"  Password   : {game_config['password']} ")
     print()
 
     player = Host(username, game_config=game_config)
@@ -131,14 +136,16 @@ def run_client(username: str) -> None:
  
             # Print the current list
             print()
-            print("╔══════════════════════════════════════════╗")
-            print("║          Games found on network          ║")
-            print("╠══════════════════════════════════════════╣")
+            print("╔════════════════════════════════════════════╗")
+            print("║          Games found on network            ║")
+            print("╠════════════════════════════════════════════╣")
             for i, h in enumerate(hosts, 1):
                 slots = f"{h['player_count']}/{h['max_players']}"
-                line  = f"  {i}. {h['host_name']} ({h['host_ip']})  [{slots}]"
-                print(f"║ {line:<40} ║")
-            print("╚══════════════════════════════════════════╝")
+                lock  = " [+]" if h.get("has_password") else "    "
+                line  = f"  {i}. {h['host_name']} ({h['host_ip']})  [{slots}]{lock}"
+                print(f"║ {line:<42} ║")
+            print("╚════════════════════════════════════════════╝")
+            print("  [+] = password protected")
             print()
  
             raw = _ask(f"Enter number to join, R to refresh, or Q to quit [1]: ", "1")
@@ -153,7 +160,8 @@ def run_client(username: str) -> None:
                 idx = int(raw) - 1
                 hosts = player.discovered_hosts   # re-read after potential refresh
                 if 0 <= idx < len(hosts):
-                    chosen_ip = hosts[idx]["host_ip"]
+                    chosen_ip   = hosts[idx]["host_ip"]
+                    chosen_host = hosts[idx]
                 else:
                     print(f"  Please enter a number between 1 and {len(hosts)}.")
             except ValueError:
@@ -163,7 +171,13 @@ def run_client(username: str) -> None:
             player.stop()
             return
  
-    player.confirm_join(chosen_ip)
+    # Collect password now, while the terminal is still clean, before the
+    # renderer starts and Ursina output would stomp over any input() prompt.
+    password = ""
+    if chosen_host.get("has_password"):
+        password = _ask("  Enter lobby password: ", "")
+
+    player.confirm_join(chosen_ip, password=password)
     print(f"  Joining game…")
     print()
     # ─────────────────────────────────────────────────────────────────────────

@@ -29,7 +29,12 @@ from protocol import (
     encode, decode,
     T_ANNOUNCE, T_JOIN_ACK, T_JOIN_DENY, T_PLAYER_LIST,
     T_GAME_START, T_GAME_STATE, T_GAME_OVER, T_DISCONNECT,
+    T_DH_INIT, T_PASSWORD_REQ,
     mk_ask, mk_join_req, mk_input, mk_disconnect,
+    mk_dh_reply, mk_password_resp,
+    generate_dh_keys, compute_dh_key, evolve_key,
+    encrypt_payload, decrypt_payload,
+    DH_P, DH_G,
 )
 
 
@@ -75,6 +80,17 @@ class Client:
         # Final scores when game ends
         self.final_scores: list[dict] = []
 
+        # Game settings received in GAME_START — used by the renderer
+        self.score_mode:    str   = "last_standing"
+        self.game_duration: float = 120.0
+
+        # Password supplied by main.py before the renderer starts
+        self._password: str = ""
+
+        # Temporary session key used only during the TCP DH/password handshake
+        self._session_key: bytes | None = None
+        self._session_key_lock = threading.Lock()
+
         # Ping (round-trip ms), updated each time a GAME_STATE echoes our timestamp
         self.ping_ms: int | None = None
 
@@ -116,10 +132,13 @@ class Client:
         for t in self._threads:
             t.join(timeout=2.0)
 
-    def confirm_join(self, host_ip: str | None = None):
+    def confirm_join(self, host_ip: str | None = None, password: str = ""):
         """
         Called by main.py (terminal) or renderer once the user picks a host.
         If host_ip is None, uses the first discovered host.
+        password is collected in the terminal before the renderer starts,
+        so it can be sent automatically when PASSWORD_REQ arrives without
+        any input() call competing with Ursina's output.
         """
         with self._discovered_lock:
             hosts = list(self.discovered_hosts)
@@ -136,6 +155,7 @@ class Client:
 
         self.host_ip   = host_ip
         self.host_name = entry["host_name"] if entry else host_ip
+        self._password = password
         self._host_found.set()
 
     def set_input(self, forward: float, turn: float):
@@ -207,6 +227,14 @@ class Client:
             self._host_found.clear()
             return
 
+        # Enable TCP keepalives so the idle lobby connection is never silently
+        # dropped by the OS when no data flows for an extended period.
+        try:
+            conn.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        except OSError:
+            pass
+        conn.settimeout(None)   # back to blocking mode after create_connection
+
         with self._tcp_lock:
             self._tcp_conn = conn
 
@@ -217,6 +245,8 @@ class Client:
         """
         Persistent TCP reader.  The host pushes newline-terminated JSON packets;
         we buffer and split properly so fragmented TCP segments are handled.
+        Uses select() with a 1 s timeout so the thread wakes periodically to
+        check _stop_event rather than blocking forever on an idle connection.
         """
         with self._tcp_lock:
             conn = self._tcp_conn
@@ -224,6 +254,12 @@ class Client:
         buf = b""
         try:
             while not self._stop_event.is_set():
+                try:
+                    ready = select.select([conn], [], [], 1.0)
+                except OSError:
+                    break
+                if not ready[0]:
+                    continue   # timeout — loop and check _stop_event
                 try:
                     data = conn.recv(4096)
                 except OSError:
@@ -246,13 +282,46 @@ class Client:
     def _handle_tcp_packet(self, pkt: dict):
         t = pkt.get("type")
 
-        if t == T_JOIN_ACK:
+        if t == T_DH_INIT:
+            # Host sends DH params first — we are Bob
+            g = pkt.get("g", DH_G)
+            p = pkt.get("p", DH_P)
+            A = pkt.get("public_key", 0)
+            b, B = generate_dh_keys(p, g)
+            key = compute_dh_key(A, b, p)
+            with self._session_key_lock:
+                self._session_key = key
+            self._dh_p = p
+            self._send_tcp(mk_dh_reply(B))
+
+        elif t == T_PASSWORD_REQ:
+            # Decrypt the challenge to verify our key works, then send our password
+            with self._session_key_lock:
+                key = self._session_key
+            if key is None:
+                return
+            try:
+                decrypt_payload(key, pkt["data"])   # validates channel; discard plaintext
+                new_key = evolve_key(key, "PASSWORD_REQUIRED")
+            except Exception:
+                return
+
+            # Use the password collected in the terminal before the renderer started
+            pw        = self._password
+            encrypted = encrypt_payload(new_key, pw)
+            final_key = evolve_key(new_key, pw)
+            with self._session_key_lock:
+                self._session_key = final_key
+            self._send_tcp(mk_password_resp(encrypted))
+
+        elif t == T_JOIN_ACK:
             self.player_id = pkt["player_id"]
             self.roster    = pkt["roster"]
             with self._phase_lock:
                 self.game_phase = "lobby"
             print(f"[client] Joined lobby as '{self.player_name}' (id={self.player_id})")
             print(f"[client] Current players: {[p['name'] for p in self.roster]}")
+            print(f"[client] Secure channel established with host")
 
         elif t == T_JOIN_DENY:
             print(f"[client] Join denied: {pkt.get('reason', '?')}")
@@ -268,7 +337,9 @@ class Client:
             print(f"[client] Lobby update: {[p['name'] for p in self.roster]}")
 
         elif t == T_GAME_START:
-            self.roster = pkt["roster"]
+            self.roster       = pkt["roster"]
+            self.score_mode    = pkt.get("score_mode", "last_standing")
+            self.game_duration = float(pkt.get("game_duration", 120.0))
             # Seed the state so the renderer has something before first UDP arrives
             with self._state_lock:
                 self._latest_state = [
@@ -357,6 +428,7 @@ class Client:
                 "host_name":    pkt.get("host_name", "?"),
                 "player_count": pkt.get("player_count", 0),
                 "max_players":  pkt.get("max_players", 0),
+                "has_password": pkt.get("has_password", False),
             }
             with self._discovered_lock:
                 ips = [h["host_ip"] for h in self.discovered_hosts]
@@ -405,6 +477,7 @@ class Client:
             self._local_tick += 1
             pkt = mk_input(self.player_id, self._local_tick, forward, turn)
             pkt["sent_at"] = time.perf_counter()   # echoed back by host in GAME_STATE
+
             raw = json.dumps(pkt).encode("utf-8")
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:

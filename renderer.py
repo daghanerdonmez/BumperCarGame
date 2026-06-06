@@ -447,8 +447,10 @@ class GameRenderer:
 
         # ── Top-left HP / timer HUD ───────────────────────────────────────
         if not in_countdown:
-            sim = self._player.sim
-            score_mode = sim.score_mode if sim is not None else 'last_standing'
+            score_mode    = getattr(self._player, 'score_mode', None) or \
+                            getattr(getattr(self._player, 'sim', None), 'score_mode', 'last_standing')
+            game_duration = getattr(self._player, 'game_duration', None) or \
+                            getattr(getattr(self._player, 'sim', None), 'game_duration', 120.0)
             if score_mode == 'last_standing':
                 hp_val = my_car['hp'] if my_car else 0
                 self._status_label.text     = 'HP:'
@@ -458,8 +460,7 @@ class GameRenderer:
                 self._status_label_val.visible  = True
             else:  # most_bumps — count down remaining seconds
                 game_elapsed = _time.time() - (self._game_start_time or _time.time())
-                game_dur     = sim.game_duration if sim is not None else 0
-                secs_left    = max(0, int(game_dur - max(0.0, game_elapsed - LOBBY_COUNTDOWN)))
+                secs_left    = max(0, int(game_duration - max(0.0, game_elapsed - LOBBY_COUNTDOWN)))
                 if secs_left != self._last_timer_sec:
                     self._last_timer_sec         = secs_left
                     self._status_label_val.text  = str(secs_left) + 's'
@@ -482,8 +483,8 @@ class GameRenderer:
 
         # ── Scoreboard ────────────────────────────────────────────────────
         if not in_countdown:
-            sim        = self._player.sim
-            score_mode = sim.score_mode if sim is not None else 'last_standing'
+            score_mode = getattr(self._player, 'score_mode', None) or \
+                         getattr(getattr(self._player, 'sim', None), 'score_mode', 'last_standing')
 
             if score_mode == 'most_bumps':
                 rows = sorted(cars, key=lambda c: c['score'], reverse=True)
