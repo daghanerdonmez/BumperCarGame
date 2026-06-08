@@ -38,14 +38,14 @@ The host presses **Enter** in the lobby to start the game.
 
 ## Controls
 
-| Key | Action |
-|-----|--------|
-| W / Up | Accelerate |
-| S / Down | Reverse |
-| A / Left | Turn left |
-| D / Right | Turn right |
-| Enter | Start game (host only) |
-| Escape | Quit |
+| Key       | Action                 |
+| --------- | ---------------------- |
+| W / Up    | Accelerate             |
+| S / Down  | Reverse                |
+| A / Left  | Turn left              |
+| D / Right | Turn right             |
+| Enter     | Start game (host only) |
+| Escape    | Quit                   |
 
 ## Rules
 
