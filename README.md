@@ -1,5 +1,7 @@
 # Bumper Car Arena
 
+by Yağız Özkan & Dağhan Erdönmez
+
 ## Overview of the Game
 
 We built a real time multiplayer bumper car game playable over a LAN. One player hosts, and others join automatically, no manual IP entry required. The host runs the authoritative physics simulation, while clients send inputs and receive game state updates at a fixed tick rate. A 3D arena is rendered using the Ursina game engine, with each car displaying its health bar and a live leaderboard showing bumps dealt and HP remaining.
