@@ -1,16 +1,5 @@
-"""
-Ursina 3D renderer for the Bumper Car Game — polished version.
+# Ursina 3D renderer
 
-Polish features
----------------
-  - Hit flash: car briefly flashes white when taking damage
-  - Camera shake: screen shakes when local player is hit
-  - Elimination sink: car sinks through the floor when knocked out
-  - Countdown overlay: 3-2-1-GO before the game begins
-  - Score flash: scoreboard gold-flashes when you score a bump
-  - Ambient + directional lighting
-  - Development-mode UI disabled (no FPS counter / exit button)
-"""
 from __future__ import annotations
 
 import math
@@ -32,16 +21,14 @@ from config import (
 # ── Camera constants ──────────────────────────────────────────────────────────
 _CAM_BACK   = 10.0
 _CAM_HEIGHT =  7.0
-_CAM_SPEED  =  8.0     # smoothing speed (higher = snappier)
-_SHAKE_DUR  =  0.30    # seconds of shake after being hit
-# Fixed downward tilt so the camera at (0, HEIGHT, -BACK) looks at the car below
-_CAM_PITCH  = math.degrees(math.atan2(_CAM_HEIGHT, _CAM_BACK))  # ≈ 35°
+_CAM_SPEED  =  8.0     
+_SHAKE_DUR  =  0.30    
+_CAM_PITCH  = math.degrees(math.atan2(_CAM_HEIGHT, _CAM_BACK))  # approx 35 degress
 
 
 # ── Per-car visuals ───────────────────────────────────────────────────────────
 
 class _CarVisual:
-    """All Ursina entities for one car in the scene."""
 
     def __init__(self, player_id: int, name: str):
         self._name       = name
@@ -55,14 +42,14 @@ class _CarVisual:
         self._dark  = color.rgb(int(r * 140), int(g * 140), int(b * 140))
         self._roof  = lerp(self._base, color.white, 0.22)
 
-        # Body (flattened box, sits on floor: y = height/2 = 0.25)
+        # Body (box)
         self.body = Entity(
             model='cube',
             color=self._base,
             scale=(1.2, 0.5, 2.0),
             y=0.25,
         )
-        # Cabin roof
+        # Roof
         self.cab = Entity(
             parent=self.body,
             model='cube',
@@ -70,7 +57,7 @@ class _CarVisual:
             scale=(0.65, 0.85, 0.52),
             position=(0, 0.68, -0.1),
         )
-        # Front bumper stripe (darker — shows which end is "front")
+        # Front bumper
         self.bumper = Entity(
             parent=self.body,
             model='cube',
@@ -81,12 +68,7 @@ class _CarVisual:
 
     # ── State update ──────────────────────────────────────────────────────────
 
-    def set_state(self, x: float, z: float, angle: float,
-                  hp: int, score: int, alive: bool) -> dict:
-        """
-        Sync visuals to simulation state.
-        Returns {'hit': bool, 'scored': bool} for triggering effects.
-        """
+    def set_state(self, x: float, z: float, angle: float, hp: int, score: int, alive: bool) -> dict:
         hit    = alive and hp    < self._prev_hp
         scored = alive and score > self._prev_score
         self._prev_hp    = hp
@@ -98,7 +80,6 @@ class _CarVisual:
             self._was_alive = False
 
         elif alive:
-            # ── Normal update ─────────────────────────────────────────────
             self.body.x          = x
             self.body.z          = z
             self.body.rotation_y = angle
@@ -113,13 +94,12 @@ class _CarVisual:
         return {'hit': hit, 'scored': scored}
 
     def remove(self):
-        destroy(self.body)   # destroys parented children too (cab, bumper)
+        destroy(self.body)  
 
 
-# ── Ursina update / input hook ────────────────────────────────────────────────
+# ── Ursina update ────────────────────────────────────────────────
 
 class _GameLoop(Entity):
-    """Entity subclass; Ursina calls update() and input() automatically."""
 
     def __init__(self, renderer: GameRenderer):
         super().__init__()
@@ -132,36 +112,31 @@ class _GameLoop(Entity):
         self._r.on_key(key)
 
 
-# ── Main renderer ─────────────────────────────────────────────────────────────
+# ── Renderer ─────────────────────────────────────────────────────────────
 
 class GameRenderer:
-    """
-    Accepts a Host or Client instance (duck-typed).
-    Call run() from the main thread — it blocks until the window closes.
-    """
 
     def __init__(self, player_obj, is_host: bool = False):
         self._player  = player_obj
         self._is_host = is_host
 
         self._car_visuals: dict[int, _CarVisual] = {}
-        self._cam_angle = 0.0   # degrees; smoothed toward car's heading
+        self._cam_angle = 0.0   
         self._cam_pivot: Entity | None = None
         self._shake_t   = 0.0   # seconds of shake remaining
 
         self._game_start_time: float | None = None
         self._prev_phase = ''
 
-        # HUD text objects (created in run())
+        # HUD text objects
         self._phase_text:      Text | None = None
         self._sb_bg:           Entity | None = None
         self._controls_hint:   Text | None = None
         self._countdown_text:  Text | None = None
 
-        # Scoreboard: list of (name_text, value_text) — one pair per player row
+        # Scoreboard: list of (name_text, value_text) 
         self._sb_rows: list[tuple] = []
 
-        # "you ↓" world-space tag above the local car (created lazily in _draw_game)
         self._you_label:  Text | None = None
 
         # Top-left HP / timer HUD (created in _build_hud)
@@ -174,7 +149,6 @@ class GameRenderer:
     # ── Entry point ───────────────────────────────────────────────────────────
 
     def run(self):
-        """Start Ursina — blocks until the window closes."""
         self._app = Ursina(title='Bumper Car Arena', borderless=False)
 
         # Background colour (dark navy)
@@ -211,7 +185,7 @@ class GameRenderer:
             color=color.rgb(40, 70, 40),
         )
 
-        # Grid lines (every 2 m) — help perceive depth and speed
+        # Grid lines
         line_col = color.rgb(50, 87, 50)
         for xi in range(-int(hw) + 1, int(hw)):
             if xi % 2 == 0:
@@ -222,7 +196,7 @@ class GameRenderer:
                 Entity(model='cube', color=line_col,
                        scale=(ARENA_WIDTH, 0.01, 0.04), z=zi, y=0.005)
 
-        # Boundary stripe on floor (bright edge, helps judge distance to wall)
+        # Boundary stripe on floor 
         stripe = color.rgb(180, 60, 60)
         stripe_w = 0.25
         for pos, scale in [
@@ -259,9 +233,6 @@ class GameRenderer:
         AmbientLight(color=color.rgba(80, 80, 100, 255))
 
     def _setup_camera(self):
-        # Pivot sits at the car's world position and rotates only around Y.
-        # Camera is a child with a fixed local offset + fixed downward tilt.
-        # This makes roll structurally impossible — no look_at ever needed.
         self._cam_pivot = Entity()
         camera.parent   = self._cam_pivot
         camera.position = Vec3(0, _CAM_HEIGHT, -_CAM_BACK)
@@ -276,7 +247,7 @@ class GameRenderer:
             scale=1.8,
             color=color.white,
         )
-        self._sb_bg = None  # removed — white text is readable on dark background
+        self._sb_bg = None  
         self._controls_hint = Text(
             text='',
             position=(0, -0.47),
@@ -293,10 +264,7 @@ class GameRenderer:
             color=color.yellow,
         )
 
-        # Top-left status HUD — two side-by-side Text nodes so each can have
-        # its own colour without relying on rich-text tag support.
-        # _status_label  = key word  ("hp :" in red, or "time:" in yellow)
-        # _status_label_val = the number/value in white
+        # Top-left status HUD 
         self._status_label = Text(
             text='',
             position=(-0.87, 0.44),
@@ -327,7 +295,7 @@ class GameRenderer:
         phase = self._player.game_phase
 
         if phase == 'game' and self._prev_phase != 'game':
-            # Just entered game — record time and reset camera
+            # Just entered game 
             self._game_start_time = _time.time()
             self._cam_angle = 0.0
 
@@ -422,9 +390,9 @@ class GameRenderer:
             if result['hit'] and cid == my_id:
                 self._shake_t = _SHAKE_DUR      # trigger camera shake
             if result['scored'] and cid == my_id:
-                pass  # (score flash removed with old scoreboard)
+                pass  
 
-        # ── "YOU" world-space label above the local car ────────────────
+        # ── "YOU" label above the car ────────────────
         my_car = next((c for c in cars if c['id'] == my_id), None)
         if my_car:
             if self._you_label is None:
@@ -491,9 +459,7 @@ class GameRenderer:
             else:
                 rows = list(cars)
 
-            # Grow the row pool if needed
-            # Name starts at NAME_X (left-anchored); value starts at VAL_X (left-anchored)
-            # so value always appears to the right of the name column.
+           
             NAME_X     = 0.30   # left edge of name column
             VAL_X      = 0.72   # left edge of value column (after name)
             ROW_TOP    = 0.45
@@ -509,7 +475,7 @@ class GameRenderer:
                               scale=ROW_SCALE, color=color.white)
                 self._sb_rows.append((name_t, val_t))
 
-            # Update each row; hide extras
+            # Update each row
             for i, (name_t, val_t) in enumerate(self._sb_rows):
                 if i < len(rows):
                     car  = rows[i]
@@ -554,20 +520,16 @@ class GameRenderer:
         self._clear_game_hud()
         self._controls_hint.text = ''
 
-    # ── Camera (smooth follow + shake) ────────────────────────────────────────
+    # ── Camera ────────────────────────────────────────
 
     def _follow_camera(self, car: dict):
-        # Smoothly rotate the pivot toward the car's heading (shortest path).
         target = car['angle']
         diff = ((target - self._cam_angle + 180) % 360) - 180
         self._cam_angle = (self._cam_angle + diff * min(1.0, time.dt * _CAM_SPEED)) % 360
 
-        # Pivot moves to car's ground position and spins in Y only.
-        # Camera's local transform is fixed: behind + above + tilted down.
         self._cam_pivot.position  = Vec3(car['x'], 0, car['z'])
         self._cam_pivot.rotation_y = self._cam_angle
 
-        # Shake: jitter the camera's local position, then snap back.
         if self._shake_t > 0:
             self._shake_t = max(0.0, self._shake_t - time.dt)
             mag = self._shake_intensity()

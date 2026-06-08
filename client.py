@@ -1,16 +1,12 @@
 """
-Client networking for the Bumper Car Game.
+Packet details are in protocol.py
+- send UDP ASK broadcasts, wait for ANNOUNCE
+- TCP connect to host, send JOIN_REQ, wait for JOIN_ACK
+- receive PLAYER_LIST updates over TCP
+- send INPUT via UDP each tick, receive GAME_STATE via UDP
+- Game over: display final scores finish network activity
 
-Flow
-----
-  discovering  →  send UDP ASK broadcasts; wait for ANNOUNCE
-  joining      →  TCP connect to host; send JOIN_REQ; wait for JOIN_ACK
-  lobby        →  idle; receive PLAYER_LIST updates over TCP
-  game         →  send INPUT via UDP each tick; receive GAME_STATE via UDP
-  over         →  display final scores; no more network activity
-
-The renderer / main thread calls start(), then reads game_phase / roster /
-get_sim_state() each frame, and pushes input via set_input().
+Main loop reads game_phase / roster / get_sim_state() each frame, and sends input via set_input()
 """
 from __future__ import annotations
 
@@ -47,51 +43,46 @@ class Client:
         self.my_ip = s.getsockname()[0]
         s.close()
 
-        # "discovering" | "joining" | "lobby" | "game" | "over"
+        # Phases: "discovering" | "joining" | "lobby" | "game" | "over"
         self.game_phase  = "discovering"
         self._phase_lock = threading.Lock()
 
-        # Set when a host ANNOUNCE is received
+        # Set when ANNOUNCE is received
         self.host_ip:   str | None = None
         self.host_name: str | None = None
         self._host_found = threading.Event()
 
-        # All hosts seen during discovery {ip: {"host_name", "player_count", "max_players"}}
-        # The renderer / main thread reads this; confirm_join() picks one.
         self.discovered_hosts: list[dict] = []
         self._discovered_lock = threading.Lock()
 
-        # Assigned by host on JOIN_ACK
+        # Assigned by host when join is acked
         self.player_id: int | None = None
 
-        # Lobby roster: list of {"id", "name", "ip"}
         self.roster: list[dict] = []
 
-        # Latest GAME_STATE cars list
+        # To store the updates to GAME_STATE cars list
         self._latest_state: list[dict] = []
         self._state_lock = threading.Lock()
 
-        # Input the renderer pushes each frame
+        # Input data
         self._current_forward = 0.0
         self._current_turn    = 0.0
         self._input_lock      = threading.Lock()
         self._local_tick      = 0
 
-        # Final scores when game ends
         self.final_scores: list[dict] = []
 
-        # Game settings received in GAME_START — used by the renderer
+        # Game settings received in GAME_START
         self.score_mode:    str   = "last_standing"
         self.game_duration: float = 120.0
 
-        # Password supplied by main.py before the renderer starts
         self._password: str = ""
 
-        # Temporary session key used only during the TCP DH/password handshake
+        # DH keys
         self._session_key: bytes | None = None
         self._session_key_lock = threading.Lock()
 
-        # Ping (round-trip ms), updated each time a GAME_STATE echoes our timestamp
+        # Round-trip ping
         self.ping_ms: int | None = None
 
         self._stop_event = threading.Event()
@@ -101,16 +92,14 @@ class Client:
         self._tcp_lock = threading.Lock()
         self._udp_sock: socket.socket | None = None
 
-    # ── Public API ────────────────────────────────────────────────────────────
 
     def start(self):
-        """Open UDP socket, start discovery. Non-blocking."""
         self._spawn(self._udp_listen_loop, "client-udp")
         self._spawn(self._discover_loop,   "client-discover")
         print(f"[client] Started as '{self.player_name}' @ {self.my_ip}")
 
     def stop(self):
-        """Send DISCONNECT if connected, signal threads, close sockets."""
+        # Send DISCONNECT when closing
         if self.player_id is not None:
             self._send_tcp(mk_disconnect(self.player_id, self.player_name))
 
@@ -133,13 +122,6 @@ class Client:
             t.join(timeout=2.0)
 
     def confirm_join(self, host_ip: str | None = None, password: str = ""):
-        """
-        Called by main.py (terminal) or renderer once the user picks a host.
-        If host_ip is None, uses the first discovered host.
-        password is collected in the terminal before the renderer starts,
-        so it can be sent automatically when PASSWORD_REQ arrives without
-        any input() call competing with Ursina's output.
-        """
         with self._discovered_lock:
             hosts = list(self.discovered_hosts)
 
@@ -159,13 +141,12 @@ class Client:
         self._host_found.set()
 
     def set_input(self, forward: float, turn: float):
-        """Called by the renderer every frame with the local player's controls."""
+        # Called every frame with the local players controls
         with self._input_lock:
             self._current_forward = max(-1.0, min(1.0, forward))
             self._current_turn    = max(-1.0, min(1.0, turn))
 
     def get_sim_state(self) -> list[dict]:
-        """Returns the latest car-state list received from the host."""
         with self._state_lock:
             return list(self._latest_state)
 
@@ -179,17 +160,12 @@ class Client:
     # ── Discovery ─────────────────────────────────────────────────────────────
 
     def _discover_loop(self):
-        """
-        Repeatedly broadcast ASK until an ANNOUNCE arrives, then join.
-        Stops itself once a host is found.
-        """
         while not self._stop_event.is_set():
             with self._phase_lock:
                 phase = self.game_phase
             if phase != "discovering":
                 return
 
-            # Burst of ASKs for faster initial response
             for _ in range(DISCOVERY_BURSTS):
                 self._send_ask()
                 time.sleep(DISCOVERY_BURST_DELAY)
@@ -210,10 +186,9 @@ class Client:
         except OSError:
             pass
 
-    # ── TCP join & lobby ──────────────────────────────────────────────────────
+    # ── Join and lobby ──────────────────────────────────────────────────────
 
     def _join_host(self):
-        """TCP connect → send JOIN_REQ → let _tcp_read_loop handle the reply."""
         with self._phase_lock:
             self.game_phase = "joining"
 
@@ -226,9 +201,6 @@ class Client:
                 self.game_phase = "discovering"
             self._host_found.clear()
             return
-
-        # Enable TCP keepalives so the idle lobby connection is never silently
-        # dropped by the OS when no data flows for an extended period.
         try:
             conn.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         except OSError:
@@ -242,12 +214,9 @@ class Client:
         self._spawn(self._tcp_read_loop, "client-tcp-reader")
 
     def _tcp_read_loop(self):
-        """
-        Persistent TCP reader.  The host pushes newline-terminated JSON packets;
-        we buffer and split properly so fragmented TCP segments are handled.
-        Uses select() with a 1 s timeout so the thread wakes periodically to
-        check _stop_event rather than blocking forever on an idle connection.
-        """
+        # Use select with a 1 s timeout so the thread wakes periodically to 
+        # check _stop_event rather than blocking forever on an idle connection
+
         with self._tcp_lock:
             conn = self._tcp_conn
 
@@ -259,7 +228,7 @@ class Client:
                 except OSError:
                     break
                 if not ready[0]:
-                    continue   # timeout — loop and check _stop_event
+                    continue   
                 try:
                     data = conn.recv(4096)
                 except OSError:
@@ -283,7 +252,7 @@ class Client:
         t = pkt.get("type")
 
         if t == T_DH_INIT:
-            # Host sends DH params first — we are Bob
+            # we are Bob
             g = pkt.get("g", DH_G)
             p = pkt.get("p", DH_P)
             A = pkt.get("public_key", 0)
@@ -295,18 +264,16 @@ class Client:
             self._send_tcp(mk_dh_reply(B))
 
         elif t == T_PASSWORD_REQ:
-            # Decrypt the challenge to verify our key works, then send our password
             with self._session_key_lock:
                 key = self._session_key
             if key is None:
                 return
             try:
-                decrypt_payload(key, pkt["data"])   # validates channel; discard plaintext
+                decrypt_payload(key, pkt["data"])  
                 new_key = evolve_key(key, "PASSWORD_REQUIRED")
             except Exception:
                 return
 
-            # Use the password collected in the terminal before the renderer started
             pw        = self._password
             encrypted = encrypt_payload(new_key, pw)
             final_key = evolve_key(new_key, pw)
@@ -340,7 +307,7 @@ class Client:
             self.roster       = pkt["roster"]
             self.score_mode    = pkt.get("score_mode", "last_standing")
             self.game_duration = float(pkt.get("game_duration", 120.0))
-            # Seed the state so the renderer has something before first UDP arrives
+            # Placeholder so the renderer has something before first packet
             with self._state_lock:
                 self._latest_state = [
                     {
@@ -369,10 +336,6 @@ class Client:
             for row in self.final_scores:
                 marker = "★" if row["winner"] else " "
                 print(f"[client]  {marker} {row['name']:15s}  score={row['score']}")
-
-        elif t == T_DISCONNECT:
-            # Host is telling us someone else left (not used currently by host, but defensive)
-            pass
 
     def _send_tcp(self, pkt: dict):
         with self._tcp_lock:
@@ -420,9 +383,7 @@ class Client:
         if t == T_ANNOUNCE:
             host_ip = pkt.get("host_ip", sender_ip)
             if host_ip == self.my_ip:
-                return   # ignore our own machine if we happen to be both
-
-            # Add/update this host in the discovery list (no auto-join)
+                return   # ignore our own machine 
             entry = {
                 "host_ip":      host_ip,
                 "host_name":    pkt.get("host_name", "?"),
@@ -437,7 +398,6 @@ class Client:
                     print(f"[client] Found host '{entry['host_name']}' @ {host_ip} "
                           f"({entry['player_count']}/{entry['max_players']} players)")
                 else:
-                    # Refresh player count in-place
                     for h in self.discovered_hosts:
                         if h["host_ip"] == host_ip:
                             h.update(entry)
@@ -455,7 +415,7 @@ class Client:
     # ── Input sender ──────────────────────────────────────────────────────────
 
     def _input_send_loop(self):
-        """Send INPUT packets to the host at INPUT_SEND_RATE Hz while in game."""
+        # Send INPUT packets to the host 30 times per tick
         dt        = 1.0 / INPUT_SEND_RATE
         next_send = time.perf_counter() + dt
 
@@ -476,7 +436,7 @@ class Client:
 
             self._local_tick += 1
             pkt = mk_input(self.player_id, self._local_tick, forward, turn)
-            pkt["sent_at"] = time.perf_counter()   # echoed back by host in GAME_STATE
+            pkt["sent_at"] = time.perf_counter()   # used for ping calculation
 
             raw = json.dumps(pkt).encode("utf-8")
             try:

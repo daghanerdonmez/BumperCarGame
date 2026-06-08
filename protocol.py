@@ -1,33 +1,32 @@
 """
-Packet protocol for the Bumper Car Game.
+Packet details
 
-All packets are JSON objects sent as UTF-8 strings terminated with '\n' over
-TCP, or as raw UTF-8 datagrams over UDP.
+All packets are JSON
 
-Packet types
-------------
-Discovery (UDP broadcast)
-  ASK       client → broadcast   "is there a host?"
-  ANNOUNCE  host   → broadcast   "I am the host"
+Packet types:
 
-Lobby (TCP, client ↔ host)
-  JOIN_REQ      client → host   request to join
-  DH_INIT       host → client   Diffie-Hellman parameters + host public key
-  DH_REPLY      client → host   client public key  (shared key now established)
-  PASSWORD_REQ  host → client   encrypted challenge — "send me your password"
-  PASSWORD_RESP client → host   encrypted password attempt
-  JOIN_ACK      host → client   accepted, carries player_id & current roster
-  JOIN_DENY     host → client   rejected (wrong password / lobby full / game running)
+Discovery (UDP)
+  ASK       client to broadcast   
+  ANNOUNCE  host   to broadcast   
+
+Lobby (TCP)
+  JOIN_REQ      client to host  
+  DH_INIT       host to client   Diffie-Hellman parameters + host public key
+  DH_REPLY      client to host   client public key  
+  PASSWORD_REQ  host to client   
+  PASSWORD_RESP client to host   
+  JOIN_ACK      host → client   carries player_id and current roster
+  JOIN_DENY     host → client   rejected (wrong password or lobby full or game running)
   PLAYER_LIST   host → all      roster update (someone joined/left)
   GAME_START    host → all      game is beginning (carries initial state)
 
-Gameplay (UDP, encrypted with 3DES after DH handshake)
-  INPUT       client → host   local controls this tick
-  GAME_STATE  host → all      authoritative world state this tick
+Gameplay (UDP)
+  INPUT       client to host   local control
+  GAME_STATE  host to all      
 
 Control (TCP)
-  GAME_OVER   host → all      match ended, carries final scores
-  DISCONNECT  either side     clean leave notification
+  GAME_OVER   host to all      carries final scores
+  DISCONNECT  either side      clean leave notification
 """
 
 from __future__ import annotations
@@ -38,7 +37,7 @@ import secrets
 
 import pyDes
 
-# ── Type constants ────────────────────────────────────────────────────────────
+# ── Constants ────────────────────────────────────────────────────────────
 
 T_ASK        = "ASK"
 T_ANNOUNCE   = "ANNOUNCE"
@@ -60,15 +59,13 @@ T_GAME_OVER  = "GAME_OVER"
 T_DISCONNECT = "DISCONNECT"
 
 
-# ── Serialisation helpers ─────────────────────────────────────────────────────
+# ── Helpers ─────────────────────────────────────────────────────
 
 def encode(packet: dict) -> bytes:
-    """Serialize a packet to UTF-8 bytes terminated with newline."""
     return (json.dumps(packet) + "\n").encode("utf-8")
 
 
 def decode(raw: str | bytes) -> dict | None:
-    """Parse a raw string/bytes into a packet dict, or None on error."""
     try:
         if isinstance(raw, bytes):
             raw = raw.decode("utf-8", errors="replace")
@@ -76,35 +73,28 @@ def decode(raw: str | bytes) -> dict | None:
     except (json.JSONDecodeError, UnicodeDecodeError):
         return None
 
-
-# ── Cryptographic helpers (same as chat2OZKAN) ────────────────────────────────
-
-DH_P = 15   # small for demo; swap for a proper safe-prime in production
+# ── DH Related ──────────────────────────────────────────────────
+DH_P = 15   
 DH_G = 2
 
 def generate_dh_keys(p: int = DH_P, g: int = DH_G) -> tuple[int, int]:
-    """Return (private_key, public_key) for a Diffie-Hellman exchange."""
     private_key = secrets.randbelow(p)
     public_key  = pow(g, private_key, p)
     return private_key, public_key
 
 def compute_dh_key(others_public: int, my_private: int, p: int = DH_P) -> bytes:
-    """Derive a 24-byte 3DES key from the shared DH secret."""
     shared = pow(others_public, my_private, p)
     return hashlib.sha256(str(shared).encode()).digest()[:24]
 
 def evolve_key(current_key: bytes, plaintext: str) -> bytes:
-    """Ratchet the session key forward after each message."""
     combined = current_key + plaintext.encode()
     return hashlib.sha256(combined).digest()[:24]
 
 def encrypt_payload(key: bytes, plaintext: str) -> str:
-    """3DES-encrypt *plaintext* and return a hex string."""
     cipher = pyDes.triple_des(key, padmode=2)
     return cipher.encrypt(plaintext).hex()
 
 def decrypt_payload(key: bytes, hex_ciphertext: str) -> str:
-    """3DES-decrypt a hex string and return the plaintext."""
     cipher = pyDes.triple_des(key, padmode=2)
     return cipher.decrypt(bytes.fromhex(hex_ciphertext), padmode=2).decode("utf-8")
 
@@ -134,9 +124,7 @@ def mk_join_req(player_name: str, player_ip: str) -> dict:
 
 
 def mk_join_ack(player_id: int, player_name: str, roster: list[dict]) -> dict:
-    """
-    roster: list of {"id": int, "name": str, "ip": str}
-    """
+    # roster: list of {"id": int, "name": str, "ip": str}
     return {
         "type": T_JOIN_ACK,
         "player_id": player_id,
@@ -150,35 +138,27 @@ def mk_join_deny(reason: str) -> dict:
 
 
 def mk_dh_init(g: int, p: int, public_key: int) -> dict:
-    """Host → client: start a Diffie-Hellman handshake."""
     return {"type": T_DH_INIT, "g": g, "p": p, "public_key": public_key}
 
 def mk_dh_reply(public_key: int) -> dict:
-    """Client → host: send client's DH public key."""
     return {"type": T_DH_REPLY, "public_key": public_key}
 
 
 def mk_password_req(encrypted_challenge: str) -> dict:
-    """Host → client: encrypted prompt to send the lobby password."""
     return {"type": T_PASSWORD_REQ, "data": encrypted_challenge}
 
 def mk_password_resp(encrypted_password: str) -> dict:
-    """Client → host: encrypted password attempt."""
     return {"type": T_PASSWORD_RESP, "data": encrypted_password}
 
-
 def mk_player_list(roster: list[dict]) -> dict:
-    """roster: list of {"id": int, "name": str, "ip": str}"""
+    # roster: list of {"id": int, "name": str, "ip": str}
     return {"type": T_PLAYER_LIST, "roster": roster}
-
 
 def mk_game_start(roster: list[dict], initial_positions: list[dict],
                   score_mode: str = 'last_standing',
                   game_duration: float = 120.0,
                   car_hp: int = 3) -> dict:
-    """
-    initial_positions: list of {"id": int, "x": float, "z": float, "angle": float}
-    """
+    # initial_positions: list of {"id": int, "x": float, "z": float, "angle": float}
     return {
         "type": T_GAME_START,
         "roster": roster,
@@ -192,10 +172,6 @@ def mk_game_start(roster: list[dict], initial_positions: list[dict],
 # ── Gameplay ──────────────────────────────────────────────────────────────────
 
 def mk_input(player_id: int, tick: int, forward: float, turn: float) -> dict:
-    """
-    forward: -1.0 (reverse) … +1.0 (accelerate)
-    turn:    -1.0 (left)    … +1.0 (right)
-    """
     return {
         "type": T_INPUT,
         "player_id": player_id,
@@ -211,7 +187,7 @@ def mk_game_state(tick: int, cars: list[dict]) -> dict:
         "id":    int,
         "x":     float,
         "z":     float,
-        "angle": float,   # degrees, 0 = +Z axis
+        "angle": float,   
         "vx":    float,
         "vz":    float,
         "hp":    int,
@@ -225,7 +201,7 @@ def mk_game_state(tick: int, cars: list[dict]) -> dict:
 # ── Control ───────────────────────────────────────────────────────────────────
 
 def mk_game_over(scores: list[dict]) -> dict:
-    """scores: list of {"id": int, "name": str, "score": int, "winner": bool}"""
+    # scores: list of {"id": int, "name": str, "score": int, "winner": bool}
     return {"type": T_GAME_OVER, "scores": scores}
 
 

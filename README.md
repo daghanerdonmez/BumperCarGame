@@ -4,7 +4,7 @@ Multiplayer LAN bumper car game for CMPE 487. One player hosts, others join auto
 
 ## Requirements
 
-- Python 3.8+
+- Python 3.11+
 - All machines must be on the **same local network (WiFi or LAN)**
 
 ## Setup

@@ -3,20 +3,20 @@ TCP_PORT = 12488
 UDP_PORT = 12489
 BUFFER_SIZE = 8192
 SOCKET_TIMEOUT = 1.0
-DISCOVERY_INTERVAL = 5.0      # seconds between auto-broadcast ASK
+DISCOVERY_INTERVAL = 5.0      
 DISCOVERY_BURSTS = 3          # how many ASKs per interval
 DISCOVERY_BURST_DELAY = 0.2   # seconds between bursts
 TCP_MSG_TIMEOUT = 2.0
 
 # Lobby
 MAX_PLAYERS = 6
-LOBBY_COUNTDOWN = 3           # seconds after host hits start
+LOBBY_COUNTDOWN = 3           
 
 # Gameplay
-TICK_RATE = 30                # simulation + state-broadcast Hz
-INPUT_SEND_RATE = 30          # client input send Hz
+TICK_RATE = 30                
+INPUT_SEND_RATE = 30          
 
-# Arena (metres, centred at origin)
+# Arena
 ARENA_WIDTH = 20.0
 ARENA_DEPTH = 20.0
 WALL_THICKNESS = 0.5
@@ -26,17 +26,17 @@ CAR_RADIUS = 0.6              # collision radius
 CAR_MASS = 1.0
 CAR_MAX_SPEED = 20.0
 CAR_ACCELERATION = 15.0
-CAR_FRICTION = 5.0            # velocity damping per second
-CAR_TURN_SPEED = 180.0        # degrees per second
-BUMP_RESTITUTION = 0.7        # bounciness on car-car collision (0-1)
+CAR_FRICTION = 5.0            
+CAR_TURN_SPEED = 180.0        
+BUMP_RESTITUTION = 0.7        # bounciness on car collision 
 WALL_RESTITUTION = 0.5        # bounciness on wall hit
 
-# Default values for scoring 
-SCORE_MODE = "last_standing"  # "last_standing" | "most_bumps".
-GAME_DURATION = 120           # seconds (used in most_bumps mode)
-CAR_HP = 3                    # hits before a car is eliminated (used in last standing mode)
+# Default values 
+SCORE_MODE = "last_standing"  # "last_standing" or "most_bumps".
+GAME_DURATION = 120           
+CAR_HP = 3                    
 
-# Visual (Ursina hints used by renderer)
+# Ursina parameters
 PLAYER_COLORS = [
     (1, 0.2, 0.2),    # red
     (0.2, 0.4, 1),    # blue

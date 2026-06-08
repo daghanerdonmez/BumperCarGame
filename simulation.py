@@ -1,7 +1,3 @@
-"""
-Pure game simulation — no networking, no rendering.
-The host creates one Simulation instance and calls step(dt) each tick.
-"""
 from __future__ import annotations
 
 import math
@@ -10,12 +6,12 @@ from config import (
     CAR_RADIUS, CAR_MAX_SPEED, CAR_ACCELERATION,
     CAR_FRICTION, CAR_TURN_SPEED,
     BUMP_RESTITUTION, WALL_RESTITUTION,
-    CAR_HP, SCORE_MODE, GAME_DURATION,   # used as defaults only
+    CAR_HP, SCORE_MODE, GAME_DURATION,   
 )
 
 _HALF_W = ARENA_WIDTH  / 2 - CAR_RADIUS   # x boundary for car centre
 _HALF_D = ARENA_DEPTH  / 2 - CAR_RADIUS   # z boundary for car centre
-_MIN_BUMP_SPEED = 1.0                       # m/s approach speed to score a bump
+_MIN_BUMP_SPEED = 1.0                      
 
 
 class CarState:
@@ -28,7 +24,7 @@ class CarState:
         self.z     = z
         self.vx    = 0.0
         self.vz    = 0.0
-        self.angle = angle   # degrees; 0 = +Z axis, increases clockwise
+        self.angle = angle   # +Z axis
         self.hp    = CAR_HP
         self.score = 0
         self.alive = True
@@ -55,12 +51,6 @@ class Simulation:
         game_duration: float = GAME_DURATION,
         car_hp:        int   = CAR_HP,
     ):
-        """
-        players:       list of {"id": int, "name": str}
-        score_mode:    "last_standing" | "most_bumps"
-        game_duration: seconds before most_bumps ends
-        car_hp:        hits before a car is eliminated (last_standing)
-        """
         self.score_mode    = score_mode
         self.game_duration = game_duration
         self.car_hp        = car_hp
@@ -71,7 +61,7 @@ class Simulation:
         self.winner_id: int | None = None
 
         self.cars:   dict[int, CarState]        = {}
-        self._inputs: dict[int, tuple[float, float]] = {}  # id -> (forward, turn)
+        self._inputs: dict[int, tuple[float, float]] = {}  
 
         self._spawn(players, car_hp)
 
@@ -84,7 +74,7 @@ class Simulation:
             theta = math.radians(i * 360.0 / n) if n > 1 else 0.0
             x = radius * math.sin(theta)
             z = radius * math.cos(theta)
-            facing = (math.degrees(theta) + 180.0) % 360.0  # face centre
+            facing = (math.degrees(theta) + 180.0) % 360.0  
             car = CarState(p["id"], p["name"], x, z, facing)
             car.hp = car_hp
             self.cars[p["id"]] = car
@@ -93,7 +83,6 @@ class Simulation:
     # ── Input ─────────────────────────────────────────────────────────────────
 
     def apply_input(self, player_id: int, forward: float, turn: float):
-        """Store the latest input from a client; called by host on INPUT packet."""
         if player_id not in self.cars:
             return
         self._inputs[player_id] = (
@@ -104,7 +93,6 @@ class Simulation:
     # ── Main step ─────────────────────────────────────────────────────────────
 
     def step(self, dt: float):
-        """Advance the simulation by dt seconds. No-op once the game is over."""
         if not self.running:
             return
 
@@ -136,7 +124,7 @@ class Simulation:
         car.vx += forward * CAR_ACCELERATION * math.sin(rad) * dt
         car.vz += forward * CAR_ACCELERATION * math.cos(rad) * dt
 
-        # Speed-independent friction (linear drag)
+        # Friction 
         speed = math.hypot(car.vx, car.vz)
         if speed > 0:
             new_speed = max(0.0, speed - CAR_FRICTION * dt)
@@ -144,7 +132,7 @@ class Simulation:
             car.vx *= scale
             car.vz *= scale
 
-        # Speed cap
+        # Speed limit
         speed = math.hypot(car.vx, car.vz)
         if speed > CAR_MAX_SPEED:
             scale = CAR_MAX_SPEED / speed
@@ -154,7 +142,6 @@ class Simulation:
         car.x += car.vx * dt
         car.z += car.vz * dt
 
-    # ── Wall bounce ───────────────────────────────────────────────────────────
 
     def _wall_bounce(self, car: CarState):
         if car.x < -_HALF_W:
@@ -175,8 +162,6 @@ class Simulation:
             if car.vz > 0:
                 car.vz = -car.vz * WALL_RESTITUTION
 
-    # ── Car-car collisions ────────────────────────────────────────────────────
-
     def _resolve_collisions(self):
         alive = [c for c in self.cars.values() if c.alive]
         for i in range(len(alive)):
@@ -193,28 +178,26 @@ class Simulation:
             return
 
         dist = math.sqrt(dist_sq)
-        nx = dx / dist   # unit normal a → b
+        nx = dx / dist  
         nz = dz / dist
 
-        # Positional correction: push apart so they just touch
+        # Push apart so they just touch
         overlap = (min_dist - dist) * 0.5
         a.x -= nx * overlap
         a.z -= nz * overlap
         b.x += nx * overlap
         b.z += nz * overlap
 
-        # Relative approach speed along normal (pre-impulse)
         approach = (a.vx - b.vx) * nx + (a.vz - b.vz) * nz
         if approach <= 0:
-            return  # already separating, no impulse needed
+            return  
 
-        # Determine attacker BEFORE applying impulse (uses pre-collision velocities)
         significant = approach >= _MIN_BUMP_SPEED
         if significant:
             a_toward_b = a.vx * nx + a.vz * nz      # how fast a moves into b
             b_toward_a = -(b.vx * nx + b.vz * nz)   # how fast b moves into a
 
-        # Impulse (equal mass simplifies to halved approach)
+        # Impulse 
         impulse = (1.0 + BUMP_RESTITUTION) * approach / 2.0
         a.vx -= impulse * nx
         a.vz -= impulse * nz
@@ -241,8 +224,7 @@ class Simulation:
     def _check_win(self):
         if self.score_mode == "last_standing":
             alive = [c for c in self.cars.values() if c.alive]
-            # Only trigger last-standing when multiple players were present;
-            # a solo player can drive freely without the game ending instantly.
+            # a solo player can drive freely without the game ending instantly
             if len(alive) <= 1 and len(self.cars) > 1:
                 self.running  = False
                 self.winner_id = alive[0].id if alive else None
@@ -252,19 +234,16 @@ class Simulation:
                 best = max(self.cars.values(), key=lambda c: c.score, default=None)
                 self.winner_id = best.id if best else None
 
-    # ── State export ──────────────────────────────────────────────────────────
+    # ── State data export ──────────────────────────────────────────────────────────
 
     def get_car_states(self) -> list[dict]:
-        """Returns data for protocol.mk_game_state()."""
         return [c.to_dict() for c in self.cars.values()]
 
     def get_initial_positions(self) -> list[dict]:
-        """Returns data for protocol.mk_game_start()."""
         return [{"id": c.id, "x": c.x, "z": c.z, "angle": c.angle}
                 for c in self.cars.values()]
 
     def get_scores(self) -> list[dict]:
-        """Returns ranked data for protocol.mk_game_over()."""
         ranked = sorted(self.cars.values(), key=lambda c: c.score, reverse=True)
         return [
             {"id": c.id, "name": c.name, "score": c.score, "winner": c.id == self.winner_id}
@@ -272,36 +251,3 @@ class Simulation:
         ]
 
 
-# ── Standalone smoke-test ─────────────────────────────────────────────────────
-
-if __name__ == "__main__":
-    players = [
-        {"id": 1, "name": "Alice"},
-        {"id": 2, "name": "Bob"},
-        {"id": 3, "name": "Carol"},
-    ]
-    sim = Simulation(players)
-
-    print("Initial positions:")
-    for pos in sim.get_initial_positions():
-        print(f"  {pos}")
-
-    # Drive car 1 straight ahead, car 2 straight ahead (toward each other)
-    sim.apply_input(1, forward=1.0, turn=0.0)
-    sim.apply_input(2, forward=1.0, turn=0.0)
-    sim.apply_input(3, forward=0.0, turn=0.0)
-
-    dt = 1.0 / 30.0
-    for _ in range(300):   # 10 simulated seconds
-        sim.step(dt)
-        if not sim.running:
-            break
-
-    print(f"\nAfter {sim.tick} ticks ({sim.elapsed:.1f}s):")
-    for state in sim.get_car_states():
-        print(f"  {state}")
-
-    print(f"\nGame over: {not sim.running}  winner_id: {sim.winner_id}")
-    print("\nScores:")
-    for row in sim.get_scores():
-        print(f"  {row}")

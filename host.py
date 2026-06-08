@@ -1,16 +1,12 @@
 """
-Host networking for the Bumper Car Game.
-
-Responsibilities:
+Packet details are in protocol.py
   - UDP broadcast: respond to ASK, periodically ANNOUNCE own presence
-  - TCP lobby: accept JOIN_REQ, maintain persistent connections for pushing
-    PLAYER_LIST / GAME_START / GAME_OVER to all clients
-  - UDP game: receive INPUT packets, broadcast GAME_STATE each tick
-  - Run the authoritative Simulation
+  - TCP lobby: Send JOIN_REQ, PLAYER_LIST, GAME_START, GAME_OVER to all clients
+  - UDP game: receive INPUT, broadcast GAME_STATE each tick
+  - Run the Simulation
 
-The Host is itself a player (player_id = 1).  The renderer / main thread
-calls start(), then start_game() when ready, then reads state each frame
-via get_sim_state() and pushes its own input via apply_local_input().
+The Host is itself a player (player_id = 1). 
+Main loop reads state each frame with get_sim_state() and pushes its own input via apply_local_input().
 """
 from __future__ import annotations
 
@@ -42,7 +38,7 @@ class Host:
         self.player_name  = player_name
         self.my_player_id = 1
 
-        # Game settings chosen by the host before starting
+        # Game settings 
         cfg = game_config or {}
         self.score_mode    = cfg.get("score_mode",    "last_standing")
         self.game_duration = float(cfg.get("game_duration", 120))
@@ -54,16 +50,15 @@ class Host:
         self.my_ip = s.getsockname()[0]
         s.close()
 
-        # "lobby" | "game" | "over"
+        # Phases: "lobby" | "game" | "over"
         self.game_phase      = "lobby"
         self._phase_lock     = threading.Lock()
 
-        # Roster: list of {"id": int, "name": str, "ip": str}
+        # Player list {"id": int, "name": str, "ip": str}
         self.roster          = []
         self._roster_lock    = threading.Lock()
         self._next_id        = 2   # host is 1, guests start at 2
 
-        # Persistent TCP connections to clients {player_id: socket}
         self._client_conns      = {}
         self._client_conns_lock = threading.Lock()
 
@@ -82,10 +77,9 @@ class Host:
         self._tcp_server_sock: socket.socket | None = None
         self._udp_sock:        socket.socket | None = None
 
-    # ── Public API ────────────────────────────────────────────────────────────
+    # ── API ────────────────────────────────────────────────────────────
 
     def start(self):
-        """Add self to roster, open sockets, spawn background threads."""
         with self._roster_lock:
             self.roster.append({
                 "id":   self.my_player_id,
@@ -101,7 +95,7 @@ class Host:
         print(f"[host] TCP:{TCP_PORT}  UDP:{UDP_PORT}")
 
     def stop(self):
-        """Signal all threads to stop and wait for them."""
+        # Signal all threads to wait
         self._stop_event.set()
         for sock in (self._tcp_server_sock, self._udp_sock):
             if sock:
@@ -113,11 +107,7 @@ class Host:
             t.join(timeout=2.0)
 
     def start_game(self) -> bool:
-        """
-        Transition lobby → game.  Creates the Simulation, sends GAME_START to
-        all clients, and spawns the fixed-rate game loop thread.
-        Returns False if already in game/over.
-        """
+        # Creates the simulation, sends GAME_START to all clients, spawns the game loop
         with self._phase_lock:
             if self.game_phase != "lobby":
                 return False
@@ -147,12 +137,10 @@ class Host:
         return True
 
     def apply_local_input(self, forward: float, turn: float):
-        """Called each frame by the renderer for the host's own car."""
         if self.sim is not None:
             self.sim.apply_input(self.my_player_id, forward, turn)
 
     def get_sim_state(self) -> list[dict]:
-        """Returns current car-state list for the renderer to consume."""
         if self.sim is not None:
             return self.sim.get_car_states()
         return []
@@ -190,27 +178,17 @@ class Host:
 
     def _handle_client_conn(self, conn: socket.socket, client_ip: str):
         """
-        Persistent handler for one client TCP connection.
-
-        Handshake order
-        ---------------
         1. Receive JOIN_REQ
-        2. DH key exchange  (so password is never sent in plaintext)
-        3. Password challenge / response  (encrypted with shared key)
-        4. Admission checks (phase, capacity)
-        5. Send JOIN_ACK, notify others
-        6. Keep-alive loop until DISCONNECT / close
-
-        All reading goes through one shared byte-buffer so that TCP segments
-        carrying multiple newline-delimited packets are never truncated.
-        SO_KEEPALIVE is enabled so the OS sends keepalive probes on the idle
+        2. DH key exchange  
+        3. Password challenge and response  
+        4. Check capacity and if the game started or not
+        5. Send JOIN_ACK and update other clients
+        SO_KEEPALIVE is so that it sends keepalive probes on the idle
         connection during the lobby/game, preventing it from being silently
-        dropped by the OS or any NAT/firewall in between.
+        dropped by the OS
         """
         player_id = None
 
-        # Enable TCP keepalives so the idle lobby connection is never silently
-        # dropped by the OS when no data flows for an extended period.
         try:
             conn.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         except OSError:
@@ -220,13 +198,6 @@ class Host:
             buf = b""
 
             def recv_line():
-                """
-                Return the next complete newline-terminated packet as a str,
-                consuming it from buf.  Returns None if the socket closed.
-                Uses select() with a timeout so the thread never blocks
-                forever on an idle connection — the OS keepalive probes handle
-                the actual liveness check.
-                """
                 nonlocal buf
                 while True:
                     if b"\n" in buf:
@@ -239,7 +210,7 @@ class Host:
                     except OSError:
                         return None
                     if not ready[0]:
-                        continue   # timeout — loop and check _stop_event again
+                        continue   # timeout
                     try:
                         chunk = conn.recv(4096)
                     except OSError:
@@ -248,7 +219,7 @@ class Host:
                         return None
                     buf += chunk
 
-            # ── Phase 1: read JOIN_REQ ────────────────────────────────────
+            # ── Read JOIN_REQ ────────────────────────────────────
             raw = recv_line()
             if raw is None:
                 return
@@ -260,8 +231,7 @@ class Host:
             player_name = pkt.get("player_name", "Player?")
             player_ip   = pkt.get("player_ip", client_ip)
 
-            # ── Phase 2: Diffie-Hellman key exchange ──────────────────────
-            # Must happen before password check so the password is encrypted.
+            # ── DH key exchange ──────────────────────
             dh_private, dh_public = generate_dh_keys(DH_P, DH_G)
             conn.sendall(encode(mk_dh_init(DH_G, DH_P, dh_public)))
 
@@ -274,8 +244,8 @@ class Host:
 
             session_key = compute_dh_key(dh_pkt["public_key"], dh_private, DH_P)
 
-            # ── Phase 3: encrypted password challenge ─────────────────────
-            # Encrypt a short challenge string so the client knows to prompt.
+            # ── Password ─────────────────────────────
+            # encrypt a short challenge string so the client knows to prompt.
             challenge_plain = "PASSWORD_REQUIRED"
             challenge_enc   = encrypt_payload(session_key, challenge_plain)
             session_key     = evolve_key(session_key, challenge_plain)
@@ -301,7 +271,7 @@ class Host:
                 print(f"[host] '{player_name}' ({player_ip}) rejected — wrong password")
                 return
 
-            # ── Phase 4: admission checks ─────────────────────────────────
+            # ── Admission checks ─────────────────────────────────
             with self._phase_lock:
                 phase = self.game_phase
             if phase != "lobby":
@@ -326,11 +296,11 @@ class Host:
             print(f"[host] '{player_name}' ({player_ip}) joined → id={player_id}")
             print(f"[host] Secure channel established with '{player_name}' (id={player_id})")
 
-            # ── Phase 5: send ACK, notify others ─────────────────────────
+            # ── Update others lists ─────────────────────────
             conn.sendall(encode(mk_join_ack(player_id, player_name, roster_snap)))
             self._broadcast_tcp(mk_player_list(roster_snap), exclude_id=player_id)
 
-            # ── Phase 6: keep-alive — wait for DISCONNECT or close ────────
+            # ── Wait for DISCONNECT or close ────────
             while not self._stop_event.is_set():
                 raw = recv_line()
                 if raw is None:
@@ -339,16 +309,10 @@ class Host:
                 if inner and inner.get("type") == T_DISCONNECT:
                     break
 
-        # ── Cleanup ───────────────────────────────────────────────────────
         if player_id is not None:
             self._handle_disconnect(player_id)
 
-    def _recv_line(self, conn: socket.socket) -> str | None:
-        """
-        Legacy single-call line reader — no longer used internally.
-        _handle_client_conn uses its own buffered recv_line closure instead,
-        to avoid dropping bytes between consecutive packets.
-        """
+    """def _recv_line(self, conn: socket.socket) -> str | None:
         try:
             conn.settimeout(None)
             buf = b""
@@ -362,9 +326,9 @@ class Host:
                     return line.decode("utf-8", errors="replace").strip()
         except OSError:
             return None
+    """
 
     def _send_tcp(self, player_id: int, packet: dict):
-        """Send a packet to one client over TCP."""
         with self._client_conns_lock:
             conn = self._client_conns.get(player_id)
         if conn:
@@ -374,7 +338,6 @@ class Host:
                 pass
 
     def _broadcast_tcp(self, packet: dict, exclude_id: int | None = None):
-        """Push a packet to every connected client except exclude_id."""
         raw = encode(packet)
         with self._client_conns_lock:
             targets = [(pid, sock)
@@ -402,7 +365,7 @@ class Host:
             self._broadcast_tcp(mk_player_list(roster_snap))
             print(f"[host] Player {player_id} left lobby")
         else:
-            # During game: eliminate the car but keep them in the roster display
+            # During game eliminate the car but keep them in the leaderboard
             if self.sim:
                 car = self.sim.cars.get(player_id)
                 if car and car.alive:
@@ -474,7 +437,6 @@ class Host:
         )
 
     def _auto_announce_loop(self):
-        """Broadcast ANNOUNCE periodically while in lobby so clients can find us."""
         while not self._stop_event.is_set():
             with self._phase_lock:
                 phase = self.game_phase
@@ -508,8 +470,6 @@ class Host:
             self.sim.step(dt)
 
             state_pkt = mk_game_state(self.sim.tick, self.sim.get_car_states())
-            # Use time.time() (absolute wall clock) so the client — a separate
-            # process with a different perf_counter origin — can subtract it correctly.
             state_pkt["sent_at"] = time.time()
             raw_out = json.dumps(state_pkt).encode("utf-8")
 

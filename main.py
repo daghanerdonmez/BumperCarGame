@@ -1,21 +1,3 @@
-"""
-Bumper Car Arena — entry point.
-
-Usage
------
-  python main.py          # interactive prompt
-  python main.py host     # go straight to host mode
-  python main.py client   # go straight to client mode
-
-Controls (in-game)
-------------------
-  W / Up     : accelerate
-  S / Down   : reverse
-  A / Left   : turn left
-  D / Right  : turn right
-  Enter      : start game (host only, in lobby)
-  Escape     : quit
-"""
 from __future__ import annotations
 
 import sys
@@ -31,7 +13,6 @@ def _ask(prompt: str, default: str = "") -> str:
 
 
 def _pick_mode() -> str:
-    """Return 'host' or 'client' based on argv or interactive prompt."""
     if len(sys.argv) > 1 and sys.argv[1].lower() in ("host", "client"):
         return sys.argv[1].lower()
 
@@ -90,7 +71,7 @@ def run_host(username: str) -> None:
 
     game_config = _host_config()
 
-    # Print a summary so the host can confirm their settings
+    # print a summary so the host can confirm their settings
     print()
     mode_label = "Last Standing" if game_config["score_mode"] == "last_standing" else "Most Bumps"
     print(f"  Mode     : {mode_label}")
@@ -106,7 +87,7 @@ def run_host(username: str) -> None:
 
     renderer = GameRenderer(player, is_host=True)
     try:
-        renderer.run()          # blocks until window closes
+        renderer.run()         
     finally:
         player.stop()
 
@@ -117,9 +98,8 @@ def run_client(username: str) -> None:
     from renderer import GameRenderer
  
     player = Client(username)
-    player.start()              # begins discovery (no auto-join)
+    player.start()             # begin discovery
  
-    # ── Terminal host-picker (blocks until user picks or quits) ──────────────
     print()
     print("Scanning for games on the local network…  (Ctrl-C to quit)")
     print()
@@ -131,7 +111,7 @@ def run_client(username: str) -> None:
             hosts = player.discovered_hosts
  
             if not hosts:
-                print("  No games found yet — still scanning…", end="\r", flush=True)
+                print("  No games found yet — still scanning…")
                 continue
  
             # Print the current list
@@ -141,11 +121,9 @@ def run_client(username: str) -> None:
             print("╠════════════════════════════════════════════╣")
             for i, h in enumerate(hosts, 1):
                 slots = f"{h['player_count']}/{h['max_players']}"
-                lock  = " [+]" if h.get("has_password") else "    "
-                line  = f"  {i}. {h['host_name']} ({h['host_ip']})  [{slots}]{lock}"
+                line  = f"  {i}. {h['host_name']} ({h['host_ip']})  [{slots}]"
                 print(f"║ {line:<42} ║")
             print("╚════════════════════════════════════════════╝")
-            print("  [+] = password protected")
             print()
  
             raw = _ask(f"Enter number to join, R to refresh, or Q to quit [1]: ", "1")
@@ -171,16 +149,14 @@ def run_client(username: str) -> None:
             player.stop()
             return
  
-    # Collect password now, while the terminal is still clean, before the
-    # renderer starts and Ursina output would stomp over any input() prompt.
+    # Password has to be collected before the renderer is active or else it will override this input
     password = ""
-    if chosen_host.get("has_password"):
-        password = _ask("  Enter lobby password: ", "")
+    password = _ask("  Enter lobby password: ", "")
 
     player.confirm_join(chosen_ip, password=password)
     print(f"  Joining game…")
     print()
-    # ─────────────────────────────────────────────────────────────────────────
+
  
     renderer = GameRenderer(player, is_host=False)
     try:
